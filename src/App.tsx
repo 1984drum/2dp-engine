@@ -417,7 +417,19 @@ const App = () => {
     };
 
     useEffect(() => {
-        fetchProjectLevels();
+        const init = async () => {
+            await fetchProjectLevels();
+            // Auto-load demo-1 if it exists
+            const res = await fetch('/api/levels');
+            const levels = await res.json();
+            if (levels.includes('demo-1')) {
+                await loadFromProject('demo-1');
+                respawnPlayer();
+                setIsPaused(false);
+                setShowWelcome(false);
+            }
+        };
+        init();
     }, []);
 
     const spawnDebris = (x: number, y: number, color: string) => {
@@ -437,7 +449,8 @@ const App = () => {
             ...playerRef.current,
             x: spawnPointRef.current ? spawnPointRef.current.x : DEFAULT_START_X,
             y: spawnPointRef.current ? spawnPointRef.current.y : DEFAULT_START_Y,
-            vx: 0, vy: 0,
+            vx: 0,
+            vy: 0,
             isGrounded: false,
             coyoteTimer: 0,
             onMovingPlatform: false,
@@ -446,6 +459,9 @@ const App = () => {
             rotation: 0,
             debugSensors: []
         };
+        // Reset camera to player position
+        cameraRef.current.x = playerRef.current.x;
+        cameraRef.current.y = playerRef.current.y;
     };
 
     const toggleLayerVis = (layer: string) => {
