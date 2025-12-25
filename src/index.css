@@ -2,10 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
+:root,
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
   margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background-color: #171717;
 }

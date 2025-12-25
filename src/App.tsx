@@ -20,6 +20,8 @@ const SLOPE_CHECK_DIST = 5;
 const ANGLE_YELLOW_THRESHOLD = 45 * (Math.PI / 180);
 const ANGLE_RED_THRESHOLD = 60 * (Math.PI / 180);
 const MAX_GROUND_ANGLE = 75 * (Math.PI / 180);
+const WORLD_WIDTH = 5120;
+const WORLD_HEIGHT = 2880;
 const STEP_HEIGHT = 16;
 
 // --- BOULDER CONSTANTS ---
@@ -101,6 +103,7 @@ const App = () => {
     const [showPaths, setShowPaths] = useState(false);
     const [notification, setNotification] = useState<string | null>(null);
     const [showWelcome, setShowWelcome] = useState(true);
+    const [isPaused, setIsPaused] = useState(true); // Default to paused for editor mode
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
     const [selectedItem, setSelectedItem] = useState<Selection | null>(null);
@@ -148,6 +151,8 @@ const App = () => {
     });
 
     const cameraRef = useRef({ x: 0, y: 0 });
+    const isPanningRef = useRef(false);
+    const lastMousePosRef = useRef({ x: 0, y: 0 });
 
     const collisionDataRef = useRef<Record<string, Uint8ClampedArray | null>>({
         ground: null, platform: null, wall: null, ceiling: null, breakable: null
@@ -190,11 +195,11 @@ const App = () => {
         layers.forEach(layer => {
             if (!layerCanvasesRef.current[layer]) {
                 const c = document.createElement('canvas');
-                c.width = 2560; // Support large screens
-                c.height = 1440;
+                c.width = WORLD_WIDTH; // Support large levels
+                c.height = WORLD_HEIGHT;
                 layerCanvasesRef.current[layer] = c;
                 const ctx = c.getContext('2d', { willReadFrequently: true });
-                collisionDataRef.current[layer] = new Uint8ClampedArray(2560 * 1440 * 4);
+                collisionDataRef.current[layer] = new Uint8ClampedArray(WORLD_WIDTH * WORLD_HEIGHT * 4);
             }
         });
         saveState();
@@ -218,7 +223,7 @@ const App = () => {
     const updateCollisionData = (layerName: string) => {
         const ctx = layerCanvasesRef.current[layerName].getContext('2d');
         if (ctx) {
-            const imageData = ctx.getImageData(0, 0, 2560, 1440);
+            const imageData = ctx.getImageData(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
             collisionDataRef.current[layerName as keyof typeof collisionDataRef.current] = imageData.data;
         }
     };
@@ -296,7 +301,7 @@ const App = () => {
         const layerData: Record<string, ImageData> = {};
         layers.forEach(l => {
             const ctx = layerCanvasesRef.current[l].getContext('2d');
-            if (ctx) layerData[l] = ctx.getImageData(0, 0, 2560, 1440);
+            if (ctx) layerData[l] = ctx.getImageData(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
         });
 
         const snapshot = {
@@ -374,10 +379,10 @@ const App = () => {
     const liftConnectedPixels = (startX: number, startY: number, layerName: string) => {
         const ctx = layerCanvasesRef.current[layerName].getContext('2d');
         if (!ctx) return null;
-        const imgData = ctx.getImageData(0, 0, 2560, 1440);
+        const imgData = ctx.getImageData(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
         const data = imgData.data;
-        const w = 2560;
-        const h = 1440;
+        const w = WORLD_WIDTH;
+        const h = WORLD_HEIGHT;
 
         const startIdx = (Math.floor(startY) * w + Math.floor(startX)) * 4;
         if (data[startIdx + 3] === 0) return null;
@@ -507,8 +512,21 @@ const App = () => {
             }
         }
 
-        let clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        let clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+        if (isPanningRef.current) {
+            const dx = clientX - lastMousePosRef.current.x;
+            const dy = clientY - lastMousePosRef.current.y;
+            cameraRef.current.x -= dx;
+            cameraRef.current.y -= dy;
+            // Clamp camera again
+            cameraRef.current.x = Math.max(0, Math.min(WORLD_WIDTH - canvasSize.width, cameraRef.current.x));
+            cameraRef.current.y = Math.max(0, Math.min(WORLD_HEIGHT - canvasSize.height, cameraRef.current.y));
+            lastMousePosRef.current = { x: clientX, y: clientY };
+            return;
+        }
+
         updateCursorPos(clientX, clientY);
 
         if (isDrawing && toolMode !== 'select' && toolMode !== 'move_bg' && toolMode !== 'move_fg') {
@@ -521,11 +539,22 @@ const App = () => {
         if (contextMenu && (contextMenu as any).dragging) {
             setContextMenu(prev => prev ? ({ ...prev, dragging: false } as any) : null);
         }
+        if (isPanningRef.current) {
+            isPanningRef.current = false;
+        }
         stopDrawing();
     };
 
     const startDrawing = (e: any) => {
         setShowWelcome(false);
+
+        // Middle mouse button for panning
+        if (e.button === 1) {
+            isPanningRef.current = true;
+            lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+            return;
+        }
+
         const { x, y } = getPointerPos(e);
 
         if (toolMode === 'move_bg') {
@@ -668,13 +697,13 @@ const App = () => {
     const scanPlatformBounds = () => {
         const ctx = layerCanvasesRef.current['platform'].getContext('2d');
         if (!ctx) return;
-        const imgData = ctx.getImageData(0, 0, 2560, 1440);
+        const imgData = ctx.getImageData(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
         const data = imgData.data;
-        let minX = 2560, maxX = 0, minY = 1440, maxY = 0;
+        let minX = WORLD_WIDTH, maxX = 0, minY = WORLD_HEIGHT, maxY = 0;
         let found = false;
-        for (let y = 0; y < 1440; y++) {
-            for (let x = 0; x < 2560; x++) {
-                const idx = (y * 2560 + x) * 4;
+        for (let y = 0; y < WORLD_HEIGHT; y++) {
+            for (let x = 0; x < WORLD_WIDTH; x++) {
+                const idx = (y * WORLD_WIDTH + x) * 4;
                 if (data[idx + 3] > 0) {
                     if (x < minX) minX = x; if (x > maxX) maxX = x;
                     if (y < minY) minY = y; if (y > maxY) maxY = y;
@@ -834,7 +863,7 @@ const App = () => {
         saveState();
         if (activeLayer === 'platform') {
             const ctx = layerCanvasesRef.current['platform'].getContext('2d');
-            if (ctx) ctx.clearRect(0, 0, 2560, 1440);
+            if (ctx) ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
             updateCollisionData('platform');
             platformPathRef.current = [];
             platformStateRef.current.active = false;
@@ -843,7 +872,7 @@ const App = () => {
             setIsEditingPath(true);
         } else {
             const ctx = layerCanvasesRef.current[activeLayer].getContext('2d');
-            if (ctx) ctx.clearRect(0, 0, 2560, 1440);
+            if (ctx) ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
             updateCollisionData(activeLayer);
         }
     };
@@ -1027,8 +1056,8 @@ const App = () => {
         if (!data) return false;
         const ix = Math.floor(lookupX);
         const iy = Math.floor(lookupY);
-        if (ix < 0 || ix >= 2560 || iy < 0 || iy >= 1440) return false;
-        const index = (iy * 2560 + ix) * 4;
+        if (ix < 0 || ix >= WORLD_WIDTH || iy < 0 || iy >= WORLD_HEIGHT) return false;
+        const index = (iy * WORLD_WIDTH + ix) * 4;
         return data[index + 3] > 100;
     };
 
@@ -1072,9 +1101,9 @@ const App = () => {
         cam.x += moveX * CAMERA_LERP;
         cam.y += moveY * CAMERA_LERP;
 
-        // Clamp to world boundaries (2560x1440)
-        cam.x = Math.max(0, Math.min(2560 - canvasSize.width, cam.x));
-        cam.y = Math.max(0, Math.min(1440 - canvasSize.height, cam.y));
+        // Clamp to world boundaries
+        cam.x = Math.max(0, Math.min(WORLD_WIDTH - canvasSize.width, cam.x));
+        cam.y = Math.max(0, Math.min(WORLD_HEIGHT - canvasSize.height, cam.y));
     };
 
     const updatePhysics = () => {
@@ -1227,7 +1256,7 @@ const App = () => {
     useEffect(() => {
         let animationFrameId: number;
         const loop = () => {
-            if (draggingPointIndex.current === -1 && !isDraggingItem) {
+            if (draggingPointIndex.current === -1 && !isDraggingItem && !isPaused) {
                 updatePlatformMovement();
                 updateBoulders();
                 updateParticles();
@@ -1285,8 +1314,8 @@ const App = () => {
         fgTransformRef.current = { x: 0, y: 0, scale: 1 };
         ['ground', 'platform', 'wall', 'ceiling', 'breakable'].forEach(l => {
             const ctx = layerCanvasesRef.current[l].getContext('2d');
-            if (ctx) ctx.clearRect(0, 0, 2560, 1440);
-            collisionDataRef.current[l as keyof typeof collisionDataRef.current] = new Uint8ClampedArray(2560 * 1440 * 4);
+            if (ctx) ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+            collisionDataRef.current[l as keyof typeof collisionDataRef.current] = new Uint8ClampedArray(WORLD_WIDTH * WORLD_HEIGHT * 4);
         });
         historyRef.current = [];
         historyIndexRef.current = -1;
@@ -1319,11 +1348,11 @@ const App = () => {
             ctx.setLineDash([2, 4]);
             ctx.lineWidth = 1;
             // Draw grid in world space
-            for (let x = 0; x <= 2560; x += gridSize) {
-                ctx.moveTo(x, 0); ctx.lineTo(x, 1440);
+            for (let x = 0; x <= WORLD_WIDTH; x += gridSize) {
+                ctx.moveTo(x, 0); ctx.lineTo(x, WORLD_HEIGHT);
             }
-            for (let y = 0; y <= 1440; y += gridSize) {
-                ctx.moveTo(0, y); ctx.lineTo(2560, y);
+            for (let y = 0; y <= WORLD_HEIGHT; y += gridSize) {
+                ctx.moveTo(0, y); ctx.lineTo(WORLD_WIDTH, y);
             }
             ctx.stroke();
             ctx.setLineDash([]);
@@ -1570,6 +1599,9 @@ const App = () => {
                 </div>
 
                 <div className="flex items-center gap-3">
+                    <button onClick={() => setIsPaused(!isPaused)} className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm transition-all ${isPaused ? 'bg-orange-600/20 text-orange-400 border border-orange-500/50 hover:bg-orange-600/30' : 'bg-green-600/20 text-green-400 border border-green-500/50 hover:bg-green-600/30'}`}>
+                        {isPaused ? <MapPin size={16} /> : <RefreshCw size={16} />} {isPaused ? 'PAUSED (Editor)' : 'RUNNING (Game)'}
+                    </button>
                     <button onClick={resetGame} className="flex items-center gap-2 px-3 py-1.5 text-neutral-300 hover:bg-neutral-700 hover:text-white rounded text-sm transition-colors">
                         <RefreshCw size={16} /> Reset
                     </button>
