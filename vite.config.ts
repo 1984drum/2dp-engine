@@ -11,23 +11,35 @@ const levelStorage = () => ({
                 const dir = path.resolve(process.cwd(), 'levels');
                 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
                 const files = fs.readdirSync(dir).filter(f => f.endsWith('.2de7'));
+                const names = files.map(f => f.replace('.2de7', ''));
+                console.log(`[API] Serving ${names.length} levels:`, names);
                 res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify(files.map(f => f.replace('.2de7', ''))));
+                res.end(JSON.stringify(names));
             }
             else if (req.url === '/api/save-level' && req.method === 'POST') {
-                let body = '';
-                req.on('data', chunk => body += chunk);
+                let chunks: any[] = [];
+                req.on('data', chunk => chunks.push(chunk));
                 req.on('end', () => {
-                    const { name, data } = JSON.parse(body);
-                    const dir = path.resolve(process.cwd(), 'levels');
-                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                    fs.writeFileSync(path.join(dir, `${name}.2de7`), JSON.stringify(data, null, 2));
-                    res.end('ok');
+                    try {
+                        const body = Buffer.concat(chunks).toString();
+                        const { name, data } = JSON.parse(body);
+                        const dir = path.resolve(process.cwd(), 'levels');
+                        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                        const filePath = path.join(dir, `${name}.2de7`);
+                        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+                        console.log(`[API] Successfully saved level: ${name} (${Math.round(body.length / 1024)} KB)`);
+                        res.end('ok');
+                    } catch (err) {
+                        console.error('[API] Save failed:', err);
+                        res.statusCode = 500;
+                        res.end('fail');
+                    }
                 });
             }
             else if (req.url?.startsWith('/api/load-level') && req.method === 'GET') {
                 const url = new URL(req.url, `http://${req.headers.host}`);
                 const name = url.searchParams.get('name');
+                console.log(`[API] Loading level: ${name}`);
                 const filePath = path.resolve(process.cwd(), 'levels', `${name}.2de7`);
                 if (fs.existsSync(filePath)) {
                     res.setHeader('Content-Type', 'application/json');

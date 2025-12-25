@@ -336,36 +336,48 @@ const App = () => {
 
         const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable'];
         const drawingData: Record<string, string> = {};
-        layers.forEach(layer => {
-            const canvas = layerCanvasesRef.current[layer];
-            if (canvas) drawingData[layer] = canvas.toDataURL();
-        });
-
-        const levelData = {
-            version: "1.0",
-            drawingData,
-            metadata: {
-                spawnPoint: spawnPointRef.current,
-                goalPoint: goalPointRef.current,
-                boulders: bouldersRef.current,
-                platformPath: platformPathRef.current,
-                platformOffset: platformOffsetRef.current
-            }
-        };
 
         try {
+            layers.forEach(layer => {
+                const canvas = layerCanvasesRef.current[layer];
+                if (canvas) {
+                    drawingData[layer] = canvas.toDataURL('image/png');
+                }
+            });
+
+            const levelData = {
+                version: "1.0",
+                drawingData,
+                metadata: {
+                    spawnPoint: spawnPointRef.current,
+                    goalPoint: goalPointRef.current,
+                    boulders: bouldersRef.current,
+                    platformPath: platformPathRef.current,
+                    platformOffset: platformOffsetRef.current
+                }
+            };
+
+            const payload = JSON.stringify({ name, data: levelData });
+            console.log(`[Save] Attempting to save "${name}". Payload size: ${Math.round(payload.length / 1024)} KB`);
+
+            setNotification(`Saving "${name}"...`);
             const res = await fetch('/api/save-level', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, data: levelData })
+                body: payload
             });
+
             if (res.ok) {
+                console.log(`[Save] Successfully saved "${name}"`);
                 setNotification(`Saved ${name} to project!`);
-                await fetchProjectLevels(); // Update the list immediately
+                await fetchProjectLevels();
+            } else {
+                const errText = await res.text();
+                throw new Error(`Server responded with ${res.status}: ${errText}`);
             }
-        } catch (err) {
-            console.error("Save failed:", err);
-            setNotification("Save to project failed.");
+        } catch (err: any) {
+            console.error("[Save] Error during save process:", err);
+            setNotification(`Save failed: ${err.message || 'Unknown error'}`);
         }
     };
 
