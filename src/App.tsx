@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { RefreshCw, Paintbrush, Eraser, Move, Image as ImageIcon, Eye, EyeOff, Layers, Check, CircleDashed, Anchor, MousePointer2, Square, Undo, Redo, Circle, X, GripHorizontal, Info, Trash2, MapPin, Flag, Grid } from 'lucide-react';
+import { RefreshCw, Paintbrush, Eraser, Move, Image as ImageIcon, Eye, EyeOff, Layers, Check, CircleDashed, Anchor, MousePointer2, Square, Undo, Redo, Circle, X, GripHorizontal, Info, Trash2, MapPin, Flag, Grid, Play, StopCircle, Video } from 'lucide-react';
 
 // Replace constants with dynamic state in the component
 // const CANVAS_WIDTH = 800;
@@ -104,6 +104,9 @@ const App = () => {
     const [notification, setNotification] = useState<string | null>(null);
     const [showWelcome, setShowWelcome] = useState(true);
     const [isPaused, setIsPaused] = useState(true); // Default to paused for editor mode
+    const [isRecording, setIsRecording] = useState(false);
+    const [isReplaying, setIsReplaying] = useState(false);
+    const [replayFrameIndex, setReplayFrameIndex] = useState(0);
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
     const [selectedItem, setSelectedItem] = useState<Selection | null>(null);
@@ -153,6 +156,8 @@ const App = () => {
     const cameraRef = useRef({ x: 0, y: 0 });
     const isPanningRef = useRef(false);
     const lastMousePosRef = useRef({ x: 0, y: 0 });
+    const recordedFramesRef = useRef<any[]>([]);
+    const replayIndexRef = useRef(0);
 
     const collisionDataRef = useRef<Record<string, Uint8ClampedArray | null>>({
         ground: null, platform: null, wall: null, ceiling: null, breakable: null
@@ -283,6 +288,43 @@ const App = () => {
             clientY = e.touches[0].clientY;
         }
         return updateCursorPos(clientX, clientY);
+    };
+
+    const toggleRecording = () => {
+        if (isRecording) {
+            setIsRecording(false);
+            setNotification("Recording stopped");
+        } else {
+            recordedFramesRef.current = [];
+            setIsRecording(true);
+            setIsPaused(false);
+            setNotification("Recording session...");
+        }
+        setTimeout(() => setNotification(null), 3000);
+    };
+
+    const toggleReplay = () => {
+        if (isReplaying) {
+            setIsReplaying(false);
+            replayIndexRef.current = 0;
+            setNotification("Replay stopped");
+        } else {
+            if (recordedFramesRef.current.length === 0) {
+                setNotification("No session recorded yet");
+            } else {
+                replayIndexRef.current = 0;
+                setReplayFrameIndex(0);
+                setIsReplaying(true);
+                setNotification("Playing back session...");
+            }
+        }
+        setTimeout(() => setNotification(null), 3000);
+    };
+
+    const clearRecording = () => {
+        recordedFramesRef.current = [];
+        setNotification("Session memory cleared");
+        setTimeout(() => setNotification(null), 3000);
     };
 
     useEffect(() => {
@@ -1150,7 +1192,7 @@ const App = () => {
             if (hitWall) { p.vx = -p.vx * WALL_BOUNCE; break; }
         }
         if (p.x < 0) p.x = 0;
-        if (p.x + p.width > canvasSize.width) p.x = canvasSize.width - p.width;
+        if (p.x + p.width > WORLD_WIDTH) p.x = WORLD_WIDTH - p.width;
 
         p.y += p.vy;
 
@@ -1250,19 +1292,41 @@ const App = () => {
             p.isGrounded = false;
         }
 
-        if (p.y > canvasSize.height) respawnPlayer();
+        if (p.y > WORLD_HEIGHT) respawnPlayer();
     };
 
     useEffect(() => {
         let animationFrameId: number;
         const loop = () => {
-            if (draggingPointIndex.current === -1 && !isDraggingItem && !isPaused) {
+            if (isReplaying) {
+                const frame = recordedFramesRef.current[replayIndexRef.current];
+                if (frame) {
+                    playerRef.current.x = frame.px;
+                    playerRef.current.y = frame.py;
+                    cameraRef.current.x = frame.cx;
+                    cameraRef.current.y = frame.cy;
+                    replayIndexRef.current++;
+                    setReplayFrameIndex(replayIndexRef.current);
+                } else {
+                    setIsReplaying(false);
+                    replayIndexRef.current = 0;
+                }
+            } else if (draggingPointIndex.current === -1 && !isDraggingItem && !isPaused) {
                 updatePlatformMovement();
                 updateBoulders();
                 updateParticles();
                 if (spawnPointRef.current) {
                     updatePhysics();
                     updateCamera();
+                }
+
+                if (isRecording) {
+                    recordedFramesRef.current.push({
+                        px: playerRef.current.x,
+                        py: playerRef.current.y,
+                        cx: cameraRef.current.x,
+                        cy: cameraRef.current.y
+                    });
                 }
             }
             drawFrame();
@@ -1596,6 +1660,33 @@ const App = () => {
                             <Eraser size={16} /> Eraser
                         </button>
                     </div>
+                </div>
+
+                <div className="flex items-center gap-2 border-l border-neutral-700 ml-1 pl-4 mr-1">
+                    <button
+                        onClick={toggleRecording}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm transition-all ${isRecording ? 'bg-red-600/20 text-red-400 border border-red-500/50 blink' : 'text-neutral-300 hover:bg-neutral-700 hover:text-white'}`}
+                        title={isRecording ? "Stop Recording" : "Record Session"}
+                    >
+                        {isRecording ? <StopCircle size={16} /> : <Video size={16} />}
+                        {isRecording ? "STOP" : "RECORD"}
+                    </button>
+
+                    <button
+                        onClick={toggleReplay}
+                        disabled={isRecording || recordedFramesRef.current.length === 0}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm transition-all ${isReplaying ? 'bg-blue-600/20 text-blue-400 border border-blue-500/50' : 'text-neutral-300 hover:bg-neutral-700 hover:text-white disabled:opacity-30'}`}
+                        title={isReplaying ? "Stop Replay" : "Watch Replay"}
+                    >
+                        {isReplaying ? <StopCircle size={16} /> : <Play size={16} />}
+                        {isReplaying ? "STOP" : "WATCH REPLAY"}
+                    </button>
+
+                    {recordedFramesRef.current.length > 0 && !isRecording && !isReplaying && (
+                        <button onClick={clearRecording} className="p-1.5 text-neutral-500 hover:text-red-400 transition-colors" title="Clear Recording">
+                            <Trash2 size={16} />
+                        </button>
+                    )}
                 </div>
 
                 <div className="flex items-center gap-3">
