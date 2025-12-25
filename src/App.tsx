@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { RefreshCw, Paintbrush, Eraser, Move, Image as ImageIcon, Eye, EyeOff, Layers, Check, CircleDashed, Anchor, MousePointer2, Square, Undo, Redo, Circle, X, GripHorizontal, Info, Trash2, MapPin, Flag, Grid, Play, StopCircle, Video, Download, Upload } from 'lucide-react';
+import { CameraSystem } from './systems/CameraSystem';
 
 // Replace constants with dynamic state in the component
 // const CANVAS_WIDTH = 800;
@@ -45,6 +46,22 @@ const DEFAULT_START_Y = 100;
 // --- TYPES ---
 interface Point { x: number; y: number; hit?: boolean; }
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; color: string; }
+interface Enemy {
+    id: string;
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    width: number;
+    height: number;
+    isGrounded: boolean;
+    coyoteTimer: number;
+    onMovingPlatform: boolean;
+    direction: number;
+    speed: number;
+    rotation: number;
+    turnCooldown: number;
+}
 interface Boulder { x: number; y: number; vx: number; vy: number; r: number; mass: number; shape: Point[]; rotation: number; av: number; destroyed?: boolean; }
 interface PlatformState { t: number; x: number; y: number; vx: number; vy: number; active: boolean; direction: number; }
 interface Selection { type: string; index?: number; layer?: string;[key: string]: any; }
@@ -66,6 +83,7 @@ const getLayerColor = (layer: string) => {
         case 'ceiling': return '#c026d3';
         case 'wall': return '#ef4444';
         case 'breakable': return '#9ca3af';
+        case 'enemy_wall': return '#06b6d4';
         default: return '#ffffff';
     }
 };
@@ -86,9 +104,10 @@ const generateBoulderShape = (radius: number) => {
 
 // --- CAMERA CONSTANTS ---
 const ASPECT_RATIO = 16 / 9;
-const CAMERA_LERP = 0.12; // Smoothing factor
-const DEAD_ZONE_W = 80;
-const DEAD_ZONE_H = 100;
+const CAMERA_LERP = 0.08; // Refined for "organic" feel
+const DEAD_ZONE_W = 120; // Larger refined dead zone
+const DEAD_ZONE_H = 80;
+const VERTICAL_OFFSET = -40; // Player slightly below center
 
 const App = () => {
     // --- UI STATE ---
@@ -103,7 +122,7 @@ const App = () => {
     const [showGrid, setShowGrid] = useState(true);
     const [gridSize, setGridSize] = useState(60);
     const [visibleLayers, setVisibleLayers] = useState<Record<string, boolean>>({
-        ground: true, wall: true, platform: true, ceiling: true, breakable: true, spawn: true, goal: true
+        ground: true, wall: true, platform: true, ceiling: true, breakable: true, enemy_wall: true, spawn: true, goal: true
     });
     const [showPaths, setShowPaths] = useState(false);
     const [notification, setNotification] = useState<string | null>(null);
@@ -151,6 +170,7 @@ const App = () => {
     });
 
     const bouldersRef = useRef<Boulder[]>([]);
+    const enemiesRef = useRef<Enemy[]>([]);
     const particlesRef = useRef<Particle[]>([]);
     const playerRef = useRef({
         x: DEFAULT_START_X, y: DEFAULT_START_Y, vx: 0, vy: 0,
@@ -162,14 +182,18 @@ const App = () => {
         debugSensors: [] as Point[]
     });
 
-    const cameraRef = useRef({ x: 0, y: 0 });
+    const cameraRef = useRef(new CameraSystem(
+        { x: 0, y: 0, targetX: 0, targetY: 0 },
+        { deadZoneWidth: DEAD_ZONE_W, deadZoneHeight: DEAD_ZONE_H, lerpFactor: CAMERA_LERP, verticalOffset: VERTICAL_OFFSET }
+    ));
+    const cameraStateRef = useRef({ x: 0, y: 0 }); // To avoid breaking code that expects cameraRef.current.x
     const isPanningRef = useRef(false);
     const lastMousePosRef = useRef({ x: 0, y: 0 });
     const recordedFramesRef = useRef<any[]>([]);
     const replayIndexRef = useRef(0);
 
     const collisionDataRef = useRef<Record<string, Uint8ClampedArray | null>>({
-        ground: null, platform: null, wall: null, ceiling: null, breakable: null
+        ground: null, platform: null, wall: null, ceiling: null, breakable: null, enemy_wall: null
     });
 
     const keysPressed = useRef<Record<string, boolean>>({});
@@ -190,7 +214,8 @@ const App = () => {
                         w = contW;
                         h = w / ASPECT_RATIO;
                     }
-                    setCanvasSize({ width: w, height: h });
+                    // Force strict 16:9 on the canvas element itself via state
+                    setCanvasSize({ width: Math.floor(w), height: Math.floor(h) });
                 }
             }
         });
@@ -205,7 +230,7 @@ const App = () => {
     }, []);
 
     useEffect(() => {
-        const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable'];
+        const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable', 'enemy_wall'];
         layers.forEach(layer => {
             if (!layerCanvasesRef.current[layer]) {
                 const c = document.createElement('canvas');
@@ -243,7 +268,7 @@ const App = () => {
     };
 
     const saveLevel = () => {
-        const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable'];
+        const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable', 'enemy_wall'];
         const drawingData: Record<string, string> = {};
 
         layers.forEach(layer => {
@@ -260,6 +285,7 @@ const App = () => {
                 spawnPoint: spawnPointRef.current,
                 goalPoint: goalPointRef.current,
                 boulders: bouldersRef.current,
+                enemies: enemiesRef.current,
                 platformPath: platformPathRef.current,
                 platformOffset: platformOffsetRef.current
             }
@@ -288,6 +314,7 @@ const App = () => {
                 spawnPointRef.current = levelData.metadata.spawnPoint;
                 goalPointRef.current = levelData.metadata.goalPoint;
                 bouldersRef.current = levelData.metadata.boulders || [];
+                enemiesRef.current = levelData.metadata.enemies || [];
                 platformPathRef.current = levelData.metadata.platformPath || [];
                 platformOffsetRef.current = levelData.metadata.platformOffset || { x: 0, y: 0 };
 
@@ -334,7 +361,7 @@ const App = () => {
         const name = prompt("Enter level name:");
         if (!name) return;
 
-        const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable'];
+        const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable', 'enemy_wall'];
         const drawingData: Record<string, string> = {};
 
         try {
@@ -352,10 +379,12 @@ const App = () => {
                     spawnPoint: spawnPointRef.current,
                     goalPoint: goalPointRef.current,
                     boulders: bouldersRef.current,
+                    enemies: enemiesRef.current,
                     platformPath: platformPathRef.current,
                     platformOffset: platformOffsetRef.current
                 }
             };
+
 
             const payload = JSON.stringify({ name, data: levelData });
             console.log(`[Save] Attempting to save "${name}". Payload size: ${Math.round(payload.length / 1024)} KB`);
@@ -389,6 +418,7 @@ const App = () => {
             spawnPointRef.current = levelData.metadata.spawnPoint;
             goalPointRef.current = levelData.metadata.goalPoint;
             bouldersRef.current = levelData.metadata.boulders || [];
+            enemiesRef.current = levelData.metadata.enemies || [];
             platformPathRef.current = levelData.metadata.platformPath || [];
             platformOffsetRef.current = levelData.metadata.platformOffset || { x: 0, y: 0 };
 
@@ -409,6 +439,8 @@ const App = () => {
                 }
             }
             setNotification(`Loaded level: ${name}`);
+            setIsDraggingItem(false);
+            setSelectedItem(null);
             saveState();
         } catch (err) {
             console.error("Load failed:", err);
@@ -425,6 +457,7 @@ const App = () => {
             if (levels.includes('demo-1')) {
                 await loadFromProject('demo-1');
                 respawnPlayer();
+                setToolMode('brush');
                 setIsPaused(false);
                 setShowWelcome(false);
             }
@@ -460,8 +493,7 @@ const App = () => {
             debugSensors: []
         };
         // Reset camera to player position
-        cameraRef.current.x = playerRef.current.x;
-        cameraRef.current.y = playerRef.current.y;
+        cameraRef.current.reset(playerRef.current.x, playerRef.current.y, canvasSize, { width: WORLD_WIDTH, height: WORLD_HEIGHT });
     };
 
     const toggleLayerVis = (layer: string) => {
@@ -479,8 +511,8 @@ const App = () => {
         // Check if within bounds
         if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
             isHoveringRef.current = true;
-            const x = (clientX - rect.left) * scaleX + cameraRef.current.x;
-            const y = (clientY - rect.top) * scaleY + cameraRef.current.y;
+            const x = (clientX - rect.left) * scaleX + cameraRef.current.getState().x;
+            const y = (clientY - rect.top) * scaleY + cameraRef.current.getState().y;
             cursorPosRef.current = { x, y };
             return { x, y };
         } else {
@@ -769,11 +801,7 @@ const App = () => {
         if (isPanningRef.current) {
             const dx = clientX - lastMousePosRef.current.x;
             const dy = clientY - lastMousePosRef.current.y;
-            cameraRef.current.x -= dx;
-            cameraRef.current.y -= dy;
-            // Clamp camera again
-            cameraRef.current.x = Math.max(0, Math.min(WORLD_WIDTH - canvasSize.width, cameraRef.current.x));
-            cameraRef.current.y = Math.max(0, Math.min(WORLD_HEIGHT - canvasSize.height, cameraRef.current.y));
+            cameraRef.current.pan(dx, dy, canvasSize, { width: WORLD_WIDTH, height: WORLD_HEIGHT });
             lastMousePosRef.current = { x: clientX, y: clientY };
             return;
         }
@@ -801,6 +829,7 @@ const App = () => {
 
         // Middle mouse button for panning
         if (e.button === 1) {
+            setIsPaused(true); // Auto-pause for editor feel
             isPanningRef.current = true;
             lastMousePosRef.current = { x: e.clientX, y: e.clientY };
             return;
@@ -893,6 +922,29 @@ const App = () => {
             setSelectedItem({ type: 'boulder', index: idx });
             setContextMenu({ x: x + 40, y: y - 40 });
             setToolMode('select');
+            return;
+        }
+
+        if (toolMode === 'enemy_place') {
+            saveState();
+            const newEnemy: Enemy = {
+                id: Math.random().toString(36).substr(2, 9),
+                x: x - 15,
+                y: y - 20,
+                vx: 0,
+                vy: 0,
+                width: 30,
+                height: 40,
+                isGrounded: false,
+                coyoteTimer: 0,
+                onMovingPlatform: false,
+                direction: 1, // Start Left to Right
+                speed: 1.5 + Math.random() * 1.5,
+                rotation: 0,
+                turnCooldown: 0
+            };
+            enemiesRef.current.push(newEnemy);
+            // Tool stays active to allow multiple drops
             return;
         }
 
@@ -1334,41 +1386,11 @@ const App = () => {
     };
 
     const updateCamera = () => {
-        const p = playerRef.current;
-        const cam = cameraRef.current;
-
-        // Target center of viewport
-        const targetCenterX = p.x + p.width / 2;
-        const targetCenterY = p.y + p.height / 2;
-
-        // Current viewport center in world space
-        const currentCenterX = cam.x + canvasSize.width / 2;
-        const currentCenterY = cam.y + canvasSize.height / 2;
-
-        // Distance from center
-        const dx = targetCenterX - currentCenterX;
-        const dy = targetCenterY - currentCenterY;
-
-        let moveX = 0;
-        let moveY = 0;
-
-        // Horizontal Dead Zone
-        if (Math.abs(dx) > DEAD_ZONE_W) {
-            moveX = dx - Math.sign(dx) * DEAD_ZONE_W;
-        }
-
-        // Vertical Dead Zone
-        if (Math.abs(dy) > DEAD_ZONE_H) {
-            moveY = dy - Math.sign(dy) * DEAD_ZONE_H;
-        }
-
-        // Smooth interpolation (Lerp)
-        cam.x += moveX * CAMERA_LERP;
-        cam.y += moveY * CAMERA_LERP;
-
-        // Clamp to world boundaries
-        cam.x = Math.max(0, Math.min(WORLD_WIDTH - canvasSize.width, cam.x));
-        cam.y = Math.max(0, Math.min(WORLD_HEIGHT - canvasSize.height, cam.y));
+        cameraRef.current.update(
+            { x: playerRef.current.x, y: playerRef.current.y, width: PLAYER_WIDTH, height: PLAYER_HEIGHT },
+            canvasSize,
+            { width: WORLD_WIDTH, height: WORLD_HEIGHT }
+        );
     };
 
     const updatePhysics = () => {
@@ -1593,6 +1615,108 @@ const App = () => {
         if (p.y > WORLD_HEIGHT) respawnPlayer();
     };
 
+    const updateEnemyPhysics = () => {
+        const enemies = enemiesRef.current;
+        if (isPaused || isReplaying) return;
+
+        enemies.forEach(en => {
+            if (en.turnCooldown > 0) en.turnCooldown--;
+
+            // Horizontal Movement (Patrol)
+            en.vx = en.direction * en.speed;
+
+            // Apply Gravity
+            en.vy += GRAVITY;
+            if (en.vy > MAX_FALL_SPEED) en.vy = MAX_FALL_SPEED;
+
+            // X Movement & Collision
+            const steps = Math.ceil(Math.abs(en.vx));
+            const stepSize = steps > 0 ? en.vx / steps : 0;
+            let hitWall = false;
+
+            for (let i = 0; i < steps; i++) {
+                en.x += stepSize;
+                const checkWall = (sideX: number) => {
+                    const points = [8, en.height * 0.5, en.height - 8]; // Buffered points
+                    for (let pt of points) {
+                        // Enemies collide with walls and breakables
+                        if (checkPixel(sideX, en.y + pt, 'wall') ||
+                            checkPixel(sideX, en.y + pt, 'breakable')) return true;
+                    }
+                    return false;
+                };
+
+                if (en.vx < 0 && checkWall(en.x)) {
+                    en.x = Math.ceil(en.x);
+                    hitWall = true;
+                } else if (en.vx > 0 && checkWall(en.x + en.width)) {
+                    en.x = Math.floor(en.x);
+                    hitWall = true;
+                }
+                if (hitWall) break;
+            }
+
+            if (hitWall && en.turnCooldown === 0) {
+                en.direction *= -1; // Turn around
+                en.turnCooldown = 15; // Prevent rapid flipping
+                en.vx = 0;
+            }
+
+            // Y Movement & Collision
+            en.y += en.vy;
+            let grounded = false;
+            if (en.vy >= 0) {
+                const feetY = Math.floor(en.y + en.height);
+                const checkGround = (offX: number) => {
+                    for (let y = feetY - 5; y < feetY + 12; y++) {
+                        if (checkPixel(en.x + offX, y, 'ground') || checkPixel(en.x + offX, y, 'platform')) return y;
+                    }
+                    return null;
+                };
+
+                const hit1 = checkGround(5); // Inset points for better edge behavior
+                const hit2 = checkGround(en.width - 5);
+                const validHitY = hit1 ?? hit2;
+
+                if (validHitY !== null) {
+                    en.y = validHitY - en.height;
+                    en.vy = 0;
+                    grounded = true;
+                }
+            }
+            en.isGrounded = grounded;
+
+            // Stable Edge Detection
+            if (grounded && en.turnCooldown === 0) {
+                // Check a bit further ahead
+                const lookAheadX = en.direction > 0 ? en.x + en.width + 5 : en.x - 5;
+                const lookAheadY = en.y + en.height + 10;
+
+                // Safety check for world bounds
+                if (lookAheadX < 0 || lookAheadX >= WORLD_WIDTH) {
+                    en.direction *= -1;
+                    en.turnCooldown = 20;
+                } else {
+                    const hasGround = checkPixel(lookAheadX, lookAheadY, 'ground') ||
+                        checkPixel(lookAheadX, lookAheadY, 'platform');
+
+                    if (!hasGround) {
+                        en.direction *= -1;
+                        en.turnCooldown = 20; // Longer cooldown for edges
+                    }
+                }
+            }
+
+            if (en.y > WORLD_HEIGHT) {
+                (en as any).removed = true;
+            }
+        });
+
+        if (enemies.some(e => (e as any).removed)) {
+            enemiesRef.current = enemies.filter(e => !(e as any).removed);
+        }
+    };
+
     useEffect(() => {
         let animationFrameId: number;
         const loop = () => {
@@ -1601,8 +1725,11 @@ const App = () => {
                 if (frame) {
                     playerRef.current.x = frame.px;
                     playerRef.current.y = frame.py;
-                    cameraRef.current.x = frame.cx;
-                    cameraRef.current.y = frame.cy;
+                    // Replay uses direct state sync
+                    const cam = cameraRef.current;
+                    cam.reset(frame.px, frame.py, canvasSize, { width: WORLD_WIDTH, height: WORLD_HEIGHT });
+                    (cam as any).state.x = frame.cx;
+                    (cam as any).state.y = frame.cy;
                     replayIndexRef.current++;
                     setReplayFrameIndex(replayIndexRef.current);
                 } else {
@@ -1613,6 +1740,7 @@ const App = () => {
                 updatePlatformMovement();
                 updateBoulders();
                 updateParticles();
+                updateEnemyPhysics();
                 if (spawnPointRef.current) {
                     updatePhysics();
                     updateCamera();
@@ -1622,8 +1750,8 @@ const App = () => {
                     recordedFramesRef.current.push({
                         px: playerRef.current.x,
                         py: playerRef.current.y,
-                        cx: cameraRef.current.x,
-                        cy: cameraRef.current.y
+                        cx: cameraRef.current.getState().x,
+                        cy: cameraRef.current.getState().y
                     });
                 }
             }
@@ -1674,11 +1802,12 @@ const App = () => {
         setShowWelcome(true);
         bgTransformRef.current = { x: 0, y: 0, scale: 1 };
         fgTransformRef.current = { x: 0, y: 0, scale: 1 };
-        ['ground', 'platform', 'wall', 'ceiling', 'breakable'].forEach(l => {
+        ['ground', 'platform', 'wall', 'ceiling', 'breakable', 'enemy_wall'].forEach(l => {
             const ctx = layerCanvasesRef.current[l].getContext('2d');
             if (ctx) ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
             collisionDataRef.current[l as keyof typeof collisionDataRef.current] = new Uint8ClampedArray(WORLD_WIDTH * WORLD_HEIGHT * 4);
         });
+        enemiesRef.current = [];
         historyRef.current = [];
         historyIndexRef.current = -1;
         saveState();
@@ -1689,7 +1818,7 @@ const App = () => {
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
-        const cam = cameraRef.current;
+        const cam = cameraRef.current.getState();
 
         ctx.fillStyle = '#1a1a1a';
         ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
@@ -1780,6 +1909,29 @@ const App = () => {
             } else {
                 ctx.lineWidth = 1; ctx.strokeStyle = '#1f2937'; ctx.stroke();
             }
+            ctx.restore();
+        });
+
+        // Draw Enemies
+        enemiesRef.current.forEach(en => {
+            ctx.save();
+            ctx.translate(en.x, en.y);
+
+            // Draw Enemy Body (Purple Capsule/Rectangle)
+            ctx.fillStyle = '#9333ea'; // Purple
+            ctx.beginPath();
+            if (ctx.roundRect) {
+                ctx.roundRect(0, 0, en.width, en.height, 8);
+            } else {
+                ctx.rect(0, 0, en.width, en.height);
+            }
+            ctx.fill();
+
+            // Draw Eyes/Direction
+            ctx.fillStyle = '#fff';
+            const eyeX = en.direction > 0 ? en.width - 10 : 5;
+            ctx.fillRect(eyeX, 8, 5, 5);
+
             ctx.restore();
         });
 
@@ -2045,6 +2197,7 @@ const App = () => {
                                 { id: 'platform', label: 'Platform', color: 'bg-blue-400', activeColor: 'bg-blue-900/80 border-blue-500' },
                                 { id: 'breakable', label: 'Breakable', color: 'bg-gray-400', activeColor: 'bg-gray-700/80 border-gray-500' },
                                 { id: 'ceiling', label: 'Ceiling', color: 'bg-fuchsia-600', activeColor: 'bg-fuchsia-900/80 border-fuchsia-500' },
+                                { id: 'enemy_wall', label: 'Enemy Walls', color: 'bg-cyan-500', activeColor: 'bg-cyan-900/80 border-cyan-500' },
                             ].map(l => (
                                 <div key={l.id} className={`relative flex items-center justify-between p-2 rounded border cursor-pointer transition-all ${activeLayer === l.id ? l.activeColor : 'bg-neutral-900/50 border-transparent hover:bg-neutral-700'}`} onClick={() => { setActiveLayer(l.id); setToolMode('brush'); }}>
                                     <div className="flex items-center gap-2">
@@ -2088,6 +2241,13 @@ const App = () => {
                                 <div className="flex items-center gap-2">
                                     <Circle size={14} className="text-purple-400" />
                                     <span className="text-xs font-medium">Boulder</span>
+                                </div>
+                            </div>
+
+                            <div className={`flex items-center p-2 rounded border cursor-pointer transition-all ${toolMode === 'enemy_place' ? 'bg-indigo-900/80 border-indigo-500' : 'bg-neutral-900/50 border-transparent hover:bg-neutral-700'}`} onClick={() => setToolMode('enemy_place')}>
+                                <div className="flex items-center gap-2">
+                                    <Square size={14} className="text-indigo-400" />
+                                    <span className="text-xs font-medium">Enemy</span>
                                 </div>
                             </div>
                         </div>
