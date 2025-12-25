@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { RefreshCw, Paintbrush, Eraser, Move, Image as ImageIcon, Eye, EyeOff, Layers, Check, CircleDashed, Anchor, MousePointer2, Square, Undo, Redo, Circle, X, GripHorizontal, Info, Trash2, MapPin, Flag, Grid, Play, StopCircle, Video } from 'lucide-react';
+import { RefreshCw, Paintbrush, Eraser, Move, Image as ImageIcon, Eye, EyeOff, Layers, Check, CircleDashed, Anchor, MousePointer2, Square, Undo, Redo, Circle, X, GripHorizontal, Info, Trash2, MapPin, Flag, Grid, Play, StopCircle, Video, Download, Upload } from 'lucide-react';
 
 // Replace constants with dynamic state in the component
 // const CANVAS_WIDTH = 800;
@@ -7,15 +7,20 @@ import { RefreshCw, Paintbrush, Eraser, Move, Image as ImageIcon, Eye, EyeOff, L
 
 
 // --- PHYSICS CONSTANTS ---
-const GRAVITY = 0.5;
-const FALL_GRAVITY_MULTIPLIER = 1.5;
-const JUMP_FORCE = -12;
-const MAX_MOVE_SPEED = 6;
-const ACCELERATION = 0.8;
-const FRICTION = 0.6;
+const GRAVITY = 0.82;
+const FALL_GRAVITY_MULTIPLIER = 2.15;
+const JUMP_FORCE = -9.8;
+const MAX_MOVE_SPEED = 9;
+const ACCELERATION = 1.4;
+const BRAKE_ACCELERATION = 3.6;
+const FRICTION = 0.72; // Increased traction (lower value = faster stop)
+const AIR_ACCELERATION = 0.8;
+const AIR_FRICTION = 0.98;
+const MIN_JUMP_GRAVITY = 0.38;
 const WALL_BOUNCE = 0.0;
 const MAX_FALL_SPEED = 15;
 const COYOTE_FRAMES = 10;
+const JUMP_BUFFER_FRAMES = 8; // Leeway for early jump presses
 const SLOPE_CHECK_DIST = 5;
 const ANGLE_YELLOW_THRESHOLD = 45 * (Math.PI / 180);
 const ANGLE_RED_THRESHOLD = 60 * (Math.PI / 180);
@@ -107,6 +112,7 @@ const App = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isReplaying, setIsReplaying] = useState(false);
     const [replayFrameIndex, setReplayFrameIndex] = useState(0);
+    const [projectLevels, setProjectLevels] = useState<string[]>([]);
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
     const [selectedItem, setSelectedItem] = useState<Selection | null>(null);
@@ -150,6 +156,9 @@ const App = () => {
         x: DEFAULT_START_X, y: DEFAULT_START_Y, vx: 0, vy: 0,
         width: PLAYER_WIDTH, height: PLAYER_HEIGHT,
         isGrounded: false, coyoteTimer: 0, onMovingPlatform: false,
+        jumpInputReady: true,
+        jumpBufferTimer: 0,
+        rotation: 0,
         debugSensors: [] as Point[]
     });
 
@@ -233,6 +242,172 @@ const App = () => {
         }
     };
 
+    const saveLevel = () => {
+        const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable'];
+        const drawingData: Record<string, string> = {};
+
+        layers.forEach(layer => {
+            const canvas = layerCanvasesRef.current[layer];
+            if (canvas) {
+                drawingData[layer] = canvas.toDataURL();
+            }
+        });
+
+        const levelData = {
+            version: "1.0",
+            drawingData,
+            metadata: {
+                spawnPoint: spawnPointRef.current,
+                goalPoint: goalPointRef.current,
+                boulders: bouldersRef.current,
+                platformPath: platformPathRef.current,
+                platformOffset: platformOffsetRef.current
+            }
+        };
+
+        const blob = new Blob([JSON.stringify(levelData)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `level_${new Date().getTime()}.2de7`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setNotification("Level exported as .2de7 file");
+    };
+
+    const loadLevel = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            try {
+                const levelData = JSON.parse(event.target?.result as string);
+
+                // Restore Metadata
+                spawnPointRef.current = levelData.metadata.spawnPoint;
+                goalPointRef.current = levelData.metadata.goalPoint;
+                bouldersRef.current = levelData.metadata.boulders || [];
+                platformPathRef.current = levelData.metadata.platformPath || [];
+                platformOffsetRef.current = levelData.metadata.platformOffset || { x: 0, y: 0 };
+
+                // Restore Drawings
+                const layers = Object.keys(levelData.drawingData);
+                for (const layer of layers) {
+                    const canvas = layerCanvasesRef.current[layer];
+                    const ctx = canvas?.getContext('2d');
+                    if (ctx && levelData.drawingData[layer]) {
+                        const img = new Image();
+                        img.src = levelData.drawingData[layer];
+                        await new Promise((resolve) => {
+                            img.onload = () => {
+                                ctx?.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+                                ctx?.drawImage(img, 0, 0);
+                                updateCollisionData(layer);
+                                resolve(null);
+                            };
+                        });
+                    }
+                }
+
+                setNotification("Level loaded successfully!");
+                saveState(); // Update undo history
+            } catch (err) {
+                console.error("Failed to load level:", err);
+                setNotification("Error loading level file.");
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    const fetchProjectLevels = async () => {
+        try {
+            const res = await fetch('/api/levels');
+            const data = await res.json();
+            setProjectLevels(data);
+        } catch (err) {
+            console.error("Failed to fetch levels:", err);
+        }
+    };
+
+    const saveToProject = async () => {
+        const name = prompt("Enter level name:");
+        if (!name) return;
+
+        const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable'];
+        const drawingData: Record<string, string> = {};
+        layers.forEach(layer => {
+            const canvas = layerCanvasesRef.current[layer];
+            if (canvas) drawingData[layer] = canvas.toDataURL();
+        });
+
+        const levelData = {
+            version: "1.0",
+            drawingData,
+            metadata: {
+                spawnPoint: spawnPointRef.current,
+                goalPoint: goalPointRef.current,
+                boulders: bouldersRef.current,
+                platformPath: platformPathRef.current,
+                platformOffset: platformOffsetRef.current
+            }
+        };
+
+        try {
+            const res = await fetch('/api/save-level', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, data: levelData })
+            });
+            if (res.ok) {
+                setNotification(`Saved ${name} to project!`);
+                await fetchProjectLevels(); // Update the list immediately
+            }
+        } catch (err) {
+            console.error("Save failed:", err);
+            setNotification("Save to project failed.");
+        }
+    };
+
+    const loadFromProject = async (name: string) => {
+        try {
+            const res = await fetch(`/api/load-level?name=${name}`);
+            const levelData = await res.json();
+
+            spawnPointRef.current = levelData.metadata.spawnPoint;
+            goalPointRef.current = levelData.metadata.goalPoint;
+            bouldersRef.current = levelData.metadata.boulders || [];
+            platformPathRef.current = levelData.metadata.platformPath || [];
+            platformOffsetRef.current = levelData.metadata.platformOffset || { x: 0, y: 0 };
+
+            for (const layer of Object.keys(levelData.drawingData)) {
+                const canvas = layerCanvasesRef.current[layer];
+                const ctx = canvas?.getContext('2d');
+                if (ctx && levelData.drawingData[layer]) {
+                    const img = new Image();
+                    img.src = levelData.drawingData[layer];
+                    await new Promise((resolve) => {
+                        img.onload = () => {
+                            ctx?.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+                            ctx?.drawImage(img, 0, 0);
+                            updateCollisionData(layer);
+                            resolve(null);
+                        };
+                    });
+                }
+            }
+            setNotification(`Loaded level: ${name}`);
+            saveState();
+        } catch (err) {
+            console.error("Load failed:", err);
+            setNotification("Failed to load level from project.");
+        }
+    };
+
+    useEffect(() => {
+        fetchProjectLevels();
+    }, []);
+
     const spawnDebris = (x: number, y: number, color: string) => {
         for (let i = 0; i < 6; i++) {
             particlesRef.current.push({
@@ -246,13 +421,19 @@ const App = () => {
     };
 
     const respawnPlayer = () => {
-        if (spawnPointRef.current) {
-            playerRef.current = {
-                x: spawnPointRef.current.x, y: spawnPointRef.current.y, vx: 0, vy: 0,
-                width: PLAYER_WIDTH, height: PLAYER_HEIGHT,
-                isGrounded: false, coyoteTimer: 0, onMovingPlatform: false, debugSensors: []
-            };
-        }
+        playerRef.current = {
+            ...playerRef.current,
+            x: spawnPointRef.current ? spawnPointRef.current.x : DEFAULT_START_X,
+            y: spawnPointRef.current ? spawnPointRef.current.y : DEFAULT_START_Y,
+            vx: 0, vy: 0,
+            isGrounded: false,
+            coyoteTimer: 0,
+            onMovingPlatform: false,
+            jumpInputReady: true,
+            jumpBufferTimer: 0,
+            rotation: 0,
+            debugSensors: []
+        };
     };
 
     const toggleLayerVis = (layer: string) => {
@@ -732,6 +913,7 @@ const App = () => {
             changed = true;
         }
         setIsDrawing(false);
+        setIsDraggingItem(false); // Always reset dragging state to prevent pausing physics
         lastPoint.current = null;
         if (changed) saveState();
     };
@@ -868,34 +1050,47 @@ const App = () => {
             return;
         }
 
-        const ctx = layerCanvasesRef.current[activeLayer].getContext('2d');
-        if (!ctx) return;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = brushSize;
+        const brushCtx = layerCanvasesRef.current[activeLayer].getContext('2d');
+        if (!brushCtx) return;
+        brushCtx.lineCap = 'round';
+        brushCtx.lineJoin = 'round';
+        brushCtx.lineWidth = brushSize;
 
+        let targetX = x;
+        let targetY = y;
+
+        // Angle Governor for Ground Layer: max 35 degrees
         if (activeLayer === 'ground' && lastPoint.current) {
-            const dx = Math.abs(x - lastPoint.current.x);
-            const dy = Math.abs(y - lastPoint.current.y);
-            const angle = Math.atan2(dy, dx);
-            ctx.strokeStyle = getSlopeColor(angle);
+            const dx = x - lastPoint.current.x;
+            const dy = y - lastPoint.current.y;
+            const maxAngle = 35 * (Math.PI / 180);
+            const maxDragY = Math.abs(dx) * Math.tan(maxAngle);
+
+            if (Math.abs(dy) > maxDragY) {
+                targetY = lastPoint.current.y + Math.sign(dy) * maxDragY;
+            }
+
+            const finalDx = Math.abs(targetX - lastPoint.current.x);
+            const finalDy = Math.abs(targetY - lastPoint.current.y);
+            const angle = Math.atan2(finalDy, finalDx);
+            brushCtx.strokeStyle = getSlopeColor(angle);
         } else {
-            ctx.strokeStyle = getLayerColor(activeLayer);
+            brushCtx.strokeStyle = getLayerColor(activeLayer);
         }
 
         if (lastPoint.current) {
             const p1 = lastPoint.current;
-            const p2 = { x, y };
+            const p2 = { x: targetX, y: targetY };
             const midPoint = {
                 x: p1.x + (p2.x - p1.x) / 2,
                 y: p1.y + (p2.y - p1.y) / 2
             };
 
-            ctx.beginPath();
-            ctx.moveTo(p1.x, p1.y);
-            ctx.quadraticCurveTo(p1.x, p1.y, midPoint.x, midPoint.y);
-            ctx.lineTo(midPoint.x, midPoint.y);
-            ctx.stroke();
+            brushCtx.beginPath();
+            brushCtx.moveTo(p1.x, p1.y);
+            brushCtx.quadraticCurveTo(p1.x, p1.y, midPoint.x, midPoint.y);
+            brushCtx.lineTo(midPoint.x, midPoint.y);
+            brushCtx.stroke();
 
             lastPoint.current = midPoint;
         }
@@ -1158,20 +1353,65 @@ const App = () => {
 
         const isLeft = keys['ArrowLeft'] || keys['KeyA'];
         const isRight = keys['ArrowRight'] || keys['KeyD'];
+        const isJumping = keys['Space'] || keys['ArrowUp'] || keys['KeyW'];
 
-        if (isLeft) { p.vx -= ACCELERATION; }
-        else if (isRight) { p.vx += ACCELERATION; }
-        else { p.vx *= FRICTION; if (Math.abs(p.vx) < 0.5) p.vx = 0; }
+        // --- JUMP INPUT & BUFFERING ---
+        if (!p.jumpInputReady && !isJumping) {
+            p.jumpInputReady = true;
+        }
 
-        if (p.vx > MAX_MOVE_SPEED) p.vx = MAX_MOVE_SPEED;
-        if (p.vx < -MAX_MOVE_SPEED) p.vx = -MAX_MOVE_SPEED;
+        if (p.jumpInputReady && isJumping) {
+            p.jumpBufferTimer = JUMP_BUFFER_FRAMES;
+            p.jumpInputReady = false; // Require release for next tap
+        }
 
+        // --- HORIZONTAL MOVEMENT ---
+        const currentAccel = p.isGrounded ? ACCELERATION : AIR_ACCELERATION;
+        const currentBrake = p.isGrounded ? BRAKE_ACCELERATION : (AIR_ACCELERATION * 3.5);
+        const currentFriction = p.isGrounded ? FRICTION : AIR_FRICTION;
+
+        if (isLeft) {
+            if (p.vx > 0) {
+                // Active braking: moving right but holding left
+                p.vx -= currentBrake;
+            } else if (p.vx > -MAX_MOVE_SPEED) {
+                // Normal acceleration
+                p.vx -= currentAccel;
+            }
+        } else if (isRight) {
+            if (p.vx < 0) {
+                // Active braking: moving left but holding right
+                p.vx += currentBrake;
+            } else if (p.vx < MAX_MOVE_SPEED) {
+                // Normal acceleration
+                p.vx += currentAccel;
+            }
+        } else {
+            // Friction when no key is held
+            p.vx *= currentFriction;
+            if (Math.abs(p.vx) < 0.5) p.vx = 0;
+        }
+
+        // Use a soft cap: only hard-cap if not moving downhill or replaying
+        const dynamicMax = MAX_MOVE_SPEED;
+        if (!isReplaying && Math.abs(p.vx) > dynamicMax * 2) p.vx = Math.sign(p.vx) * dynamicMax * 2;
+
+        // --- VERTICAL MOVEMENT (GRAVITY) ---
         let appliedGravity = GRAVITY;
-        if (p.vy > 0) appliedGravity *= FALL_GRAVITY_MULTIPLIER;
+
+        // Super Mario World Variable Jump Height
+        // If moving up and holding jump, gravity is significantly lower
+        if (p.vy < 0 && isJumping) {
+            appliedGravity = MIN_JUMP_GRAVITY;
+        } else if (p.vy > 0) {
+            appliedGravity *= FALL_GRAVITY_MULTIPLIER;
+        }
+
         p.vy += appliedGravity;
 
-        const isJumping = keys['Space'] || keys['ArrowUp'] || keys['KeyW'];
-        if (p.vy < 0 && !isJumping) p.vy *= 0.8;
+        // Variable jump cutoff (if they release the button early, slow down ascent much faster)
+        if (p.vy < 0 && !isJumping) p.vy *= 0.65;
+
         if (p.vy > MAX_FALL_SPEED) p.vy = MAX_FALL_SPEED;
 
         const steps = Math.ceil(Math.abs(p.vx));
@@ -1197,12 +1437,17 @@ const App = () => {
         p.y += p.vy;
 
         if (p.vy < 0) {
-            const hitCeiling = checkPixel(p.x + 5, p.y, 'ceiling') ||
-                checkPixel(p.x + p.width - 5, p.y, 'ceiling') ||
-                checkPixel(p.x + p.width / 2, p.y, 'ceiling');
+            // Robust Ceiling Check: include ground/wall/breakable so you can't jump through steep hills
+            const isCeiling = (x: number, y: number) =>
+                checkPixel(x, y, 'ceiling') || checkPixel(x, y, 'ground') || checkPixel(x, y, 'wall') || checkPixel(x, y, 'breakable');
+
+            const hitCeiling = isCeiling(p.x + 5, p.y) ||
+                isCeiling(p.x + p.width - 5, p.y) ||
+                isCeiling(p.x + p.width / 2, p.y);
+
             if (hitCeiling) {
                 p.y = Math.ceil(p.y);
-                while (checkPixel(p.x + p.width / 2, p.y, 'ceiling')) p.y++;
+                while (isCeiling(p.x + p.width / 2, p.y)) p.y++;
                 p.vy = 0;
             }
         }
@@ -1230,12 +1475,13 @@ const App = () => {
                 const hit = checkPoint(off);
                 p.debugSensors.push({ x: p.x + off, y: feetY, hit: !!hit });
                 return hit;
-            });
+            }).filter(h => h !== null) as { y: number, type: string }[];
 
             let validHit = null;
-            if (hits[0] && hits[1]) validHit = hits[0].y < hits[1].y ? hits[0] : hits[1];
-            else if (hits[1] && hits[2]) validHit = hits[1].y < hits[2].y ? hits[1] : hits[2];
-            else if (hits[2] && hits[3]) validHit = hits[2].y < hits[3].y ? hits[2] : hits[3];
+            if (hits.length > 0) {
+                // Return the "highest" ground point (lowest Y) to snap to the surface
+                validHit = hits.sort((a, b) => a.y - b.y)[0];
+            }
 
             if (validHit) {
                 const centerX = p.x + p.width / 2;
@@ -1243,9 +1489,9 @@ const App = () => {
                 const y1 = getSurfaceHeight(centerX - SLOPE_CHECK_DIST, validHit.y, validHit.type) ?? validHit.y;
                 const y2 = getSurfaceHeight(centerX + SLOPE_CHECK_DIST, validHit.y, validHit.type) ?? validHit.y;
                 const rise = y2 - y1;
-                slopeAngle = Math.atan2(Math.abs(rise), run);
+                slopeAngle = Math.atan2(rise, run);
 
-                if (slopeAngle > ANGLE_RED_THRESHOLD && validHit.type === 'ground') {
+                if (Math.abs(slopeAngle) > ANGLE_RED_THRESHOLD && validHit.type === 'ground') {
                     p.x -= p.vx;
                 } else {
                     p.y = validHit.y - p.height;
@@ -1253,21 +1499,36 @@ const App = () => {
                     groundedThisFrame = true;
                     if (validHit.type === 'platform') onPlatformThisFrame = true;
 
-                    if (slopeAngle > 0.1) {
-                        const movingRight = p.vx > 0;
-                        const movingLeft = p.vx < 0;
-                        const slopeDownToRight = rise > 0;
-                        const slopeUpToRight = rise < 0;
-                        let isDownhill = false; let isUphill = false;
-                        if (movingRight) { if (slopeDownToRight) isDownhill = true; if (slopeUpToRight) isUphill = true; }
-                        else if (movingLeft) { if (slopeDownToRight) isUphill = true; if (slopeUpToRight) isDownhill = true; }
-                        const slopeFactor = (slopeAngle / ANGLE_RED_THRESHOLD);
+                    if (Math.abs(slopeAngle) > 0.05) {
+                        const movingRight = p.vx > 0.1;
+                        const movingLeft = p.vx < -0.1;
+
+                        // rise > 0 means screen-y increases (slopes DOWN to the right \)
+                        // rise < 0 means screen-y decreases (slopes UP to the right /)
+                        let isDownhill = false;
+                        let isUphill = false;
+
+                        if (movingRight) {
+                            if (rise > 0) isDownhill = true;
+                            if (rise < 0) isUphill = true;
+                        } else if (movingLeft) {
+                            if (rise < 0) isDownhill = true;
+                            if (rise > 0) isUphill = true;
+                        }
+
+                        const slopeFactor = (Math.abs(slopeAngle) / ANGLE_RED_THRESHOLD);
                         if (isDownhill) {
-                            const momentum = slopeFactor * 0.8;
+                            // Sonic-style momentum: faster downhill and higher cap
+                            const momentum = slopeFactor * 1.5;
                             if (movingRight) p.vx += momentum; if (movingLeft) p.vx -= momentum;
+
+                            // Allow speed to exceed MAX_MOVE_SPEED on downhill (up to 60% boost)
+                            const downhillMax = MAX_MOVE_SPEED * (1 + slopeFactor * 0.6);
+                            if (Math.abs(p.vx) > downhillMax) p.vx = Math.sign(p.vx) * downhillMax;
                         } else if (isUphill) {
-                            p.vx *= (1 - slopeFactor * 0.2);
-                            const slopeSpeedCap = MAX_MOVE_SPEED * (1 - slopeFactor * 0.7);
+                            // Challenging uphill: more resistance and aggressive cap
+                            p.vx *= (1 - slopeFactor * 0.45); // Slightly stronger resistance
+                            const slopeSpeedCap = MAX_MOVE_SPEED * (1 - slopeFactor * 0.82);
                             if (Math.abs(p.vx) > slopeSpeedCap) p.vx = Math.sign(p.vx) * slopeSpeedCap;
                         }
                     }
@@ -1279,18 +1540,27 @@ const App = () => {
             p.isGrounded = true;
             p.coyoteTimer = COYOTE_FRAMES;
             p.onMovingPlatform = onPlatformThisFrame;
+            // Smoothly rotate to match slope
+            p.rotation += (slopeAngle - p.rotation) * 0.2;
         } else {
             p.isGrounded = false;
             p.onMovingPlatform = false;
             if (p.coyoteTimer > 0) p.coyoteTimer--;
+            // Return to flat in air
+            p.rotation += (0 - p.rotation) * 0.1;
         }
 
-        if (isJumping && p.coyoteTimer > 0) {
+        // Execute Jump from Buffer or Coyote Time
+        if (p.jumpBufferTimer > 0 && (p.isGrounded || p.coyoteTimer > 0)) {
             p.vy = JUMP_FORCE;
-            p.coyoteTimer = 0;
-            p.y -= 2;
             p.isGrounded = false;
+            p.coyoteTimer = 0;
+            p.jumpBufferTimer = 0;
+            p.onMovingPlatform = false;
+            p.jumpInputReady = false;
         }
+
+        if (p.jumpBufferTimer > 0) p.jumpBufferTimer--;
 
         if (p.y > WORLD_HEIGHT) respawnPlayer();
     };
@@ -1334,7 +1604,7 @@ const App = () => {
         };
         animationFrameId = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(animationFrameId);
-    }, [visibleLayers, showPaths, backgroundImage, foregroundImage, isEditingPath, debugMode, activeLayer, toolMode, platformSpeed, selectedItem, contextMenu, isDraggingItem, showCollisions, showGrid, gridSize, bgScaleUI, fgScaleUI, canvasSize]);
+    }, [visibleLayers, showPaths, backgroundImage, foregroundImage, isEditingPath, debugMode, activeLayer, toolMode, platformSpeed, selectedItem, contextMenu, isDraggingItem, showCollisions, showGrid, gridSize, bgScaleUI, fgScaleUI, canvasSize, isRecording, isReplaying, isPaused]);
 
     const deleteSelectedItem = () => {
         saveState();
@@ -1488,6 +1758,21 @@ const App = () => {
         if (visibleLayers.spawn && spawnPointRef.current) {
             const spawn = spawnPointRef.current;
             const isSpawnSelected = selectedItem?.type === 'spawn';
+
+            // Draw actual player at their position
+            const p = playerRef.current;
+            ctx.save();
+            ctx.translate(p.x + p.width / 2, p.y + p.height / 2);
+            ctx.rotate(p.rotation);
+            ctx.fillStyle = '#3b82f6';
+            ctx.fillRect(-p.width / 2, -p.height / 2, p.width, p.height);
+            // Eyes/Front indicator
+            ctx.fillStyle = '#fff';
+            const faceDir = p.vx !== 0 ? Math.sign(p.vx) : 1;
+            ctx.fillRect(faceDir > 0 ? (p.width / 2 - 8) : (-p.width / 2 + 3), -5, 5, 5);
+            ctx.restore();
+
+            // Draw Spawn Marker
             ctx.strokeStyle = isSpawnSelected ? '#facc15' : '#ef4444';
             ctx.lineWidth = 2;
             ctx.strokeRect(spawn.x, spawn.y, PLAYER_WIDTH, PLAYER_HEIGHT);
@@ -1646,6 +1931,26 @@ const App = () => {
                         <button onClick={undo} disabled={!canUndo} className={`p-2 rounded transition-all ${canUndo ? 'hover:bg-neutral-700 text-white' : 'text-neutral-600 cursor-not-allowed'}`} title="Undo"><Undo size={18} /></button>
                         <button onClick={redo} disabled={!canRedo} className={`p-2 rounded transition-all ${canRedo ? 'hover:bg-neutral-700 text-white' : 'text-neutral-600 cursor-not-allowed'}`} title="Redo"><Redo size={18} /></button>
                     </div>
+
+                    <div className="h-6 w-px bg-neutral-700 mx-2"></div>
+
+                    <div className="flex gap-1">
+                        <button onClick={saveToProject} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm transition-all shadow-lg" title="Save current level to project folder">
+                            <Download size={16} /> Save to Project
+                        </button>
+                    </div>
+
+                    <div className="h-6 w-px bg-neutral-700 mx-2"></div>
+
+                    <div className="flex gap-1">
+                        <button onClick={saveLevel} className="flex items-center gap-2 px-3 py-1.5 text-neutral-400 hover:bg-neutral-700 hover:text-white rounded text-sm transition-colors" title="Export Level as .2de7 file">
+                            Export
+                        </button>
+                        <label className="flex items-center gap-2 px-3 py-1.5 text-neutral-400 hover:bg-neutral-700 hover:text-white rounded text-sm transition-colors cursor-pointer" title="Import Level from .2de7 file">
+                            Import
+                            <input type="file" accept=".2de7" className="hidden" onChange={loadLevel} />
+                        </label>
+                    </div>
                 </div>
 
                 <div className="flex items-center gap-4">
@@ -1757,6 +2062,36 @@ const App = () => {
                                     <span className="text-xs font-medium">Boulder</span>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <div className="h-px bg-neutral-700/50"></div>
+
+                    <div className="flex flex-col gap-3 flex-1 min-h-0">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Level Library</h3>
+                            <button onClick={fetchProjectLevels} className="text-neutral-500 hover:text-white" title="Refresh projects">
+                                <RefreshCw size={12} />
+                            </button>
+                        </div>
+                        <div className="flex flex-col gap-1 overflow-y-auto pr-1 custom-scrollbar">
+                            {projectLevels.length === 0 ? (
+                                <div className="text-[10px] text-neutral-600 italic p-2 text-center bg-neutral-900/30 rounded border border-dashed border-neutral-700">
+                                    No levels found in project folder.
+                                </div>
+                            ) : (
+                                projectLevels.map(name => (
+                                    <div key={name} className="group flex items-center justify-between p-2 rounded bg-neutral-900/50 hover:bg-neutral-700 transition-all border border-transparent hover:border-neutral-600">
+                                        <span className="text-xs truncate max-w-[120px]" title={name}>{name}</span>
+                                        <button
+                                            onClick={() => loadFromProject(name)}
+                                            className="px-2 py-1 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white text-[10px] rounded transition-all opacity-0 group-hover:opacity-100 font-bold"
+                                        >
+                                            LOAD
+                                        </button>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </div>
 
