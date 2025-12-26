@@ -13,8 +13,7 @@ export interface Particle {
     color: string;
 }
 
-export interface Enemy {
-    id: string;
+export interface PhysicalEntity {
     x: number;
     y: number;
     vx: number;
@@ -24,9 +23,13 @@ export interface Enemy {
     isGrounded: boolean;
     coyoteTimer: number;
     onMovingPlatform: boolean;
+    rotation: number;
+}
+
+export interface Enemy extends PhysicalEntity {
+    id: string;
     direction: number;
     speed: number;
-    rotation: number;
     turnCooldown: number;
 }
 
@@ -60,18 +63,8 @@ export interface SelectionItem {
     [key: string]: any;
 }
 
-export interface Player {
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    width: number;
-    height: number;
-    isGrounded: boolean;
-    coyoteTimer: number;
-    onMovingPlatform: boolean;
+export interface Player extends PhysicalEntity {
     jumpInputReady: boolean;
     jumpBufferTimer: number;
-    rotation: number;
     debugSensors: Point[];
 }

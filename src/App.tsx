@@ -2,7 +2,8 @@ import React, { useRef, useEffect, useState } from 'react';
 import { RefreshCw, Paintbrush, Eraser, Move, Image as ImageIcon, Eye, EyeOff, Layers, Check, CircleDashed, Anchor, MousePointer2, Square, Undo, Redo, Circle, X, GripHorizontal, Info, Trash2, MapPin, Flag, Grid, Play, StopCircle, Video, Download, Upload } from 'lucide-react';
 import { CameraSystem } from './systems/CameraSystem';
 import * as Constants from './constants';
-import { Point, Enemy, Boulder, PlatformState, SelectionItem, Particle } from './types';
+import * as Physics from './systems/PhysicsSystem';
+import { Point, SelectionItem, Enemy, Player, Boulder, PlatformState, Particle } from './types';
 import { getSlopeColor, getLayerColor, generateBoulderShape, getPointOnSpline } from './utils';
 
 // Destructure common constants for brevity
@@ -1354,13 +1355,10 @@ const App = () => {
         const isJumping = keys['Space'] || keys['ArrowUp'] || keys['KeyW'];
 
         // --- JUMP INPUT & BUFFERING ---
-        if (!p.jumpInputReady && !isJumping) {
-            p.jumpInputReady = true;
-        }
-
+        if (!p.jumpInputReady && !isJumping) p.jumpInputReady = true;
         if (p.jumpInputReady && isJumping) {
             p.jumpBufferTimer = JUMP_BUFFER_FRAMES;
-            p.jumpInputReady = false; // Require release for next tap
+            p.jumpInputReady = false;
         }
 
         // --- HORIZONTAL MOVEMENT ---
@@ -1369,186 +1367,64 @@ const App = () => {
         const currentFriction = p.isGrounded ? FRICTION : AIR_FRICTION;
 
         if (isLeft) {
-            if (p.vx > 0) {
-                // Active braking: moving right but holding left
-                p.vx -= currentBrake;
-            } else if (p.vx > -MAX_MOVE_SPEED) {
-                // Normal acceleration
-                p.vx -= currentAccel;
-            }
+            if (p.vx > 0) p.vx -= currentBrake;
+            else if (p.vx > -MAX_MOVE_SPEED) p.vx -= currentAccel;
         } else if (isRight) {
-            if (p.vx < 0) {
-                // Active braking: moving left but holding right
-                p.vx += currentBrake;
-            } else if (p.vx < MAX_MOVE_SPEED) {
-                // Normal acceleration
-                p.vx += currentAccel;
-            }
+            if (p.vx < 0) p.vx += currentBrake;
+            else if (p.vx < MAX_MOVE_SPEED) p.vx += currentAccel;
         } else {
-            // Friction when no key is held
             p.vx *= currentFriction;
             if (Math.abs(p.vx) < 0.5) p.vx = 0;
         }
 
-        // Use a soft cap: only hard-cap if not moving downhill or replaying
-        const dynamicMax = MAX_MOVE_SPEED;
-        if (!isReplaying && Math.abs(p.vx) > dynamicMax * 2) p.vx = Math.sign(p.vx) * dynamicMax * 2;
+        if (!isReplaying && Math.abs(p.vx) > MAX_MOVE_SPEED * 2) p.vx = Math.sign(p.vx) * MAX_MOVE_SPEED * 2;
 
         // --- VERTICAL MOVEMENT (GRAVITY) ---
         let appliedGravity = GRAVITY;
-
-        // Super Mario World Variable Jump Height
-        // If moving up and holding jump, gravity is significantly lower
-        if (p.vy < 0 && isJumping) {
-            appliedGravity = MIN_JUMP_GRAVITY;
-        } else if (p.vy > 0) {
-            appliedGravity *= FALL_GRAVITY_MULTIPLIER;
-        }
+        if (p.vy < 0 && isJumping) appliedGravity = MIN_JUMP_GRAVITY;
+        else if (p.vy > 0) appliedGravity *= FALL_GRAVITY_MULTIPLIER;
 
         p.vy += appliedGravity;
-
-        // Variable jump cutoff (if they release the button early, slow down ascent much faster)
         if (p.vy < 0 && !isJumping) p.vy *= 0.65;
-
         if (p.vy > MAX_FALL_SPEED) p.vy = MAX_FALL_SPEED;
 
+        // --- UNIFIED COLLISION STEPS ---
         const steps = Math.ceil(Math.abs(p.vx));
         const stepSize = steps > 0 ? p.vx / steps : 0;
+        const deps = { checkPixel, getSurfaceHeight };
 
-        for (let i = 0; i < steps; i++) {
-            p.x += stepSize;
-            const checkWallFullBody = (sideX: number) => {
-                const points = [5, p.height * 0.25, p.height * 0.5, p.height * 0.75, p.height - 5];
-                for (let pt of points) {
-                    if (checkPixel(sideX, p.y + pt, 'wall') || checkPixel(sideX, p.y + pt, 'breakable')) return true;
-                }
-                return false;
-            };
-            let hitWall = false;
-            if (p.vx < 0) { if (checkWallFullBody(p.x)) { p.x = Math.ceil(p.x); hitWall = true; } }
-            else if (p.vx > 0) { if (checkWallFullBody(p.x + p.width)) { p.x = Math.floor(p.x); hitWall = true; } }
-            if (hitWall) { p.vx = -p.vx * WALL_BOUNCE; break; }
-        }
-        if (p.x < 0) p.x = 0;
-        if (p.x + p.width > WORLD_WIDTH) p.x = WORLD_WIDTH - p.width;
+        // X Collision
+        Physics.updateHorizontalCollisions(p, stepSize, steps, deps, false);
 
+        // Y Movement & Ceiling
         p.y += p.vy;
+        if (p.vy < 0) Physics.checkCeilingCollision(p, deps);
 
-        if (p.vy < 0) {
-            // Robust Ceiling Check: include ground/wall/breakable so you can't jump through steep hills
-            const isCeiling = (x: number, y: number) =>
-                checkPixel(x, y, 'ceiling') || checkPixel(x, y, 'ground') || checkPixel(x, y, 'wall') || checkPixel(x, y, 'breakable');
+        // Grounding & slopes
+        const g = Physics.updateGrounding(p, deps, p.onMovingPlatform, { vx: ps.vx, vy: ps.vy });
 
-            const hitCeiling = isCeiling(p.x + 5, p.y) ||
-                isCeiling(p.x + p.width - 5, p.y) ||
-                isCeiling(p.x + p.width / 2, p.y);
+        if (g.groundedThisFrame && Math.abs(g.slopeAngle) > 0.05) {
+            const slopeFactor = (Math.abs(g.slopeAngle) / ANGLE_RED_THRESHOLD);
+            const movingRight = p.vx > 0.1;
+            const movingLeft = p.vx < -0.1;
+            const rise = Math.tan(g.slopeAngle) * (SLOPE_CHECK_DIST * 2);
 
-            if (hitCeiling) {
-                p.y = Math.ceil(p.y);
-                while (isCeiling(p.x + p.width / 2, p.y)) p.y++;
-                p.vy = 0;
+            let isDownhill = (movingRight && rise > 0) || (movingLeft && rise < 0);
+            let isUphill = (movingRight && rise < 0) || (movingLeft && rise > 0);
+
+            if (isDownhill) {
+                const momentum = slopeFactor * 1.5;
+                if (movingRight) p.vx += momentum; else p.vx -= momentum;
+                const dsMax = MAX_MOVE_SPEED * (1 + slopeFactor * 0.6);
+                if (Math.abs(p.vx) > dsMax) p.vx = Math.sign(p.vx) * dsMax;
+            } else if (isUphill) {
+                p.vx *= (1 - slopeFactor * 0.45);
+                const usCap = MAX_MOVE_SPEED * (1 - slopeFactor * 0.82);
+                if (Math.abs(p.vx) > usCap) p.vx = Math.sign(p.vx) * usCap;
             }
         }
 
-        let groundedThisFrame = false;
-        let onPlatformThisFrame = false;
-        let slopeAngle = 0;
-
-        if (p.vy >= 0) {
-            const feetY = Math.floor(p.y + p.height);
-            const lookDown = p.isGrounded ? STEP_HEIGHT : (Math.max(Math.ceil(p.vy), 4) + 2);
-
-            const checkPoint = (offsetX: number) => {
-                for (let y = feetY - STEP_HEIGHT; y < feetY + lookDown; y++) {
-                    if (checkPixel(p.x + offsetX, y, 'ground')) return { y, type: 'ground' };
-                    if (checkPixel(p.x + offsetX, y, 'platform')) {
-                        if (y > feetY - 5) return { y, type: 'platform' };
-                    }
-                }
-                return null;
-            };
-
-            const offsets = [0, p.width * 0.33, p.width * 0.66, p.width];
-            const hits = offsets.map(off => {
-                const hit = checkPoint(off);
-                p.debugSensors.push({ x: p.x + off, y: feetY, hit: !!hit });
-                return hit;
-            }).filter(h => h !== null) as { y: number, type: string }[];
-
-            let validHit = null;
-            if (hits.length > 0) {
-                // Return the "highest" ground point (lowest Y) to snap to the surface
-                validHit = hits.sort((a, b) => a.y - b.y)[0];
-            }
-
-            if (validHit) {
-                const centerX = p.x + p.width / 2;
-                const run = SLOPE_CHECK_DIST * 2;
-                const y1 = getSurfaceHeight(centerX - SLOPE_CHECK_DIST, validHit.y, validHit.type) ?? validHit.y;
-                const y2 = getSurfaceHeight(centerX + SLOPE_CHECK_DIST, validHit.y, validHit.type) ?? validHit.y;
-                const rise = y2 - y1;
-                slopeAngle = Math.atan2(rise, run);
-
-                if (Math.abs(slopeAngle) > ANGLE_RED_THRESHOLD && validHit.type === 'ground') {
-                    p.x -= p.vx;
-                } else {
-                    p.y = validHit.y - p.height;
-                    p.vy = 0;
-                    groundedThisFrame = true;
-                    if (validHit.type === 'platform') onPlatformThisFrame = true;
-
-                    if (Math.abs(slopeAngle) > 0.05) {
-                        const movingRight = p.vx > 0.1;
-                        const movingLeft = p.vx < -0.1;
-
-                        // rise > 0 means screen-y increases (slopes DOWN to the right \)
-                        // rise < 0 means screen-y decreases (slopes UP to the right /)
-                        let isDownhill = false;
-                        let isUphill = false;
-
-                        if (movingRight) {
-                            if (rise > 0) isDownhill = true;
-                            if (rise < 0) isUphill = true;
-                        } else if (movingLeft) {
-                            if (rise < 0) isDownhill = true;
-                            if (rise > 0) isUphill = true;
-                        }
-
-                        const slopeFactor = (Math.abs(slopeAngle) / ANGLE_RED_THRESHOLD);
-                        if (isDownhill) {
-                            // Sonic-style momentum: faster downhill and higher cap
-                            const momentum = slopeFactor * 1.5;
-                            if (movingRight) p.vx += momentum; if (movingLeft) p.vx -= momentum;
-
-                            // Allow speed to exceed MAX_MOVE_SPEED on downhill (up to 60% boost)
-                            const downhillMax = MAX_MOVE_SPEED * (1 + slopeFactor * 0.6);
-                            if (Math.abs(p.vx) > downhillMax) p.vx = Math.sign(p.vx) * downhillMax;
-                        } else if (isUphill) {
-                            // Challenging uphill: more resistance and aggressive cap
-                            p.vx *= (1 - slopeFactor * 0.45); // Slightly stronger resistance
-                            const slopeSpeedCap = MAX_MOVE_SPEED * (1 - slopeFactor * 0.82);
-                            if (Math.abs(p.vx) > slopeSpeedCap) p.vx = Math.sign(p.vx) * slopeSpeedCap;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (groundedThisFrame) {
-            p.isGrounded = true;
-            p.coyoteTimer = COYOTE_FRAMES;
-            p.onMovingPlatform = onPlatformThisFrame;
-            // Smoothly rotate to match slope
-            p.rotation += (slopeAngle - p.rotation) * 0.2;
-        } else {
-            p.isGrounded = false;
-            p.onMovingPlatform = false;
-            if (p.coyoteTimer > 0) p.coyoteTimer--;
-            // Return to flat in air
-            p.rotation += (0 - p.rotation) * 0.1;
-        }
-
-        // Execute Jump from Buffer or Coyote Time
+        // Execute Jump
         if (p.jumpBufferTimer > 0 && (p.isGrounded || p.coyoteTimer > 0)) {
             p.vy = JUMP_FORCE;
             p.isGrounded = false;
@@ -1559,12 +1435,12 @@ const App = () => {
         }
 
         if (p.jumpBufferTimer > 0) p.jumpBufferTimer--;
-
         if (p.y > WORLD_HEIGHT) respawnPlayer();
     };
 
     const updateEnemyPhysics = () => {
         const enemies = enemiesRef.current;
+        const ps = platformStateRef.current;
         if (isPaused || isReplaying) return;
 
         enemies.forEach(en => {
@@ -1577,75 +1453,34 @@ const App = () => {
             en.vy += GRAVITY;
             if (en.vy > MAX_FALL_SPEED) en.vy = MAX_FALL_SPEED;
 
-            // X Movement & Collision
+            // --- UNIFIED COLLISION STEPS ---
             const steps = Math.ceil(Math.abs(en.vx));
             const stepSize = steps > 0 ? en.vx / steps : 0;
-            let hitWall = false;
+            const deps = { checkPixel, getSurfaceHeight };
 
-            for (let i = 0; i < steps; i++) {
-                en.x += stepSize;
-                const checkWall = (sideX: number) => {
-                    const points = [8, en.height * 0.5, en.height - 8]; // Buffered points
-                    for (let pt of points) {
-                        // Enemies collide with walls, breakables, and enemy_walls
-                        if (checkPixel(sideX, en.y + pt, 'wall') ||
-                            checkPixel(sideX, en.y + pt, 'breakable') ||
-                            checkPixel(sideX, en.y + pt, 'enemy_wall')) return true;
-                    }
-                    return false;
-                };
-
-                if (en.vx < 0 && checkWall(en.x)) {
-                    en.x = Math.ceil(en.x);
-                    hitWall = true;
-                } else if (en.vx > 0 && checkWall(en.x + en.width)) {
-                    en.x = Math.floor(en.x);
-                    hitWall = true;
-                }
-                if (hitWall) break;
-            }
+            // X Movement & Wall/EnemyWall collision
+            const hitWall = Physics.updateHorizontalCollisions(en, stepSize, steps, deps, true);
 
             if (hitWall && en.turnCooldown === 0) {
-                en.direction *= -1; // Turn around
-                en.turnCooldown = 15; // Prevent rapid flipping
+                en.direction *= -1;
+                en.turnCooldown = 15;
                 en.vx = 0;
             }
 
-            // Y Movement & Collision
+            // Y Movement & Ceiling
             en.y += en.vy;
-            let grounded = false;
-            if (en.vy >= 0) {
-                const feetY = Math.floor(en.y + en.height);
-                const checkGround = (offX: number) => {
-                    for (let y = feetY - 5; y < feetY + 12; y++) {
-                        if (checkPixel(en.x + offX, y, 'ground') || checkPixel(en.x + offX, y, 'platform')) return y;
-                    }
-                    return null;
-                };
+            if (en.vy < 0) Physics.checkCeilingCollision(en, deps);
 
-                const hit1 = checkGround(5); // Inset points for better edge behavior
-                const hit2 = checkGround(en.width - 5);
-                const validHitY = hit1 ?? hit2;
+            // Grounding & slopes (same as player)
+            const g = Physics.updateGrounding(en, deps, en.onMovingPlatform, { vx: ps.vx, vy: ps.vy });
 
-                if (validHitY !== null) {
-                    en.y = validHitY - en.height;
-                    en.vy = 0;
-                    grounded = true;
-                }
-            }
-            en.isGrounded = grounded;
-
-            // Stable Edge Detection
-            if (grounded && en.turnCooldown === 0) {
-                // Check just past the feet in the current direction
+            // Edge Detection
+            if (g.groundedThisFrame && en.turnCooldown === 0) {
                 const lookAheadX = en.direction > 0 ? en.x + en.width + 1 : en.x - 1;
-
-                // Safety check for world bounds
                 if (lookAheadX < 0 || lookAheadX >= WORLD_WIDTH) {
                     en.direction *= -1;
                     en.turnCooldown = 20;
                 } else {
-                    // Check for ground in a vertical range to catch thin platforms
                     let hasGround = false;
                     const feetY = Math.floor(en.y + en.height);
                     for (let y = feetY - 2; y < feetY + 15; y++) {
@@ -1654,17 +1489,14 @@ const App = () => {
                             break;
                         }
                     }
-
                     if (!hasGround) {
                         en.direction *= -1;
-                        en.turnCooldown = 25; // Stop them from jittering at the very edge
+                        en.turnCooldown = 30; // Solid turn
                     }
                 }
             }
 
-            if (en.y > WORLD_HEIGHT) {
-                (en as any).removed = true;
-            }
+            if (en.y > WORLD_HEIGHT) (en as any).removed = true;
         });
 
         if (enemies.some(e => (e as any).removed)) {
