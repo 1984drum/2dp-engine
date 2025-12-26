@@ -76,14 +76,9 @@ export class CameraSystem {
         this.state.x += (this.state.targetX - this.state.x) * this.config.lerpFactor;
         this.state.y += (this.state.targetY - this.state.y) * this.config.lerpFactor;
 
-        // 6. World Clamping
-        // Ensure the camera doesn't show outside the world bounds
-        this.state.x = Math.max(0, Math.min(world.width - viewport.width, this.state.x));
-        this.state.y = Math.max(0, Math.min(world.height - viewport.height, this.state.y));
-
-        // Sync target if we hit a hard bound to prevent "pulling" against the edge
-        this.state.targetX = Math.max(0, Math.min(world.width - viewport.width, this.state.targetX));
-        this.state.targetY = Math.max(0, Math.min(world.height - viewport.height, this.state.targetY));
+        // 6. World Clamping - REMOVED for free panning
+        // this.state.x = Math.max(0, Math.min(world.width - viewport.width, this.state.x));
+        // this.state.y = Math.max(0, Math.min(world.height - viewport.height, this.state.y));
 
         return this.state;
     }
@@ -95,9 +90,6 @@ export class CameraSystem {
         this.state.x -= dx;
         this.state.y -= dy;
 
-        // Clamp and sync target
-        this.state.x = Math.max(0, Math.min(world.width - viewport.width, this.state.x));
-        this.state.y = Math.max(0, Math.min(world.height - viewport.height, this.state.y));
         this.state.targetX = this.state.x;
         this.state.targetY = this.state.y;
 
@@ -112,9 +104,6 @@ export class CameraSystem {
         this.state.x = x - viewport.width / 2;
         this.state.y = y - viewport.height / 2;
 
-        // Clamp and sync
-        this.state.x = Math.max(0, Math.min(world.width - viewport.width, this.state.x));
-        this.state.y = Math.max(0, Math.min(world.height - viewport.height, this.state.y));
         this.state.targetX = this.state.x;
         this.state.targetY = this.state.y;
 

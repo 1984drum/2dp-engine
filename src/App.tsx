@@ -459,6 +459,7 @@ const App = () => {
             // Auto-load demo-1 if it exists
             const res = await fetch('/api/levels');
             const levels = await res.json();
+            /* 
             if (levels.includes('demo-1')) {
                 await loadFromProject('demo-1');
                 respawnPlayer();
@@ -466,6 +467,7 @@ const App = () => {
                 setIsPaused(false);
                 setShowWelcome(false);
             }
+            */
         };
         init();
     }, []);
@@ -1849,12 +1851,19 @@ const App = () => {
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
             ctx.setLineDash([2, 4]);
             ctx.lineWidth = 1;
-            // Draw grid in world space
-            for (let x = 0; x <= WORLD_WIDTH; x += gridSize) {
-                ctx.moveTo(x, 0); ctx.lineTo(x, WORLD_HEIGHT);
+            // Draw infinite grid in world space based on camera view
+            const startX = Math.floor(cam.x / gridSize) * gridSize;
+            const endX = cam.x + canvasSize.width;
+            for (let x = startX; x <= endX; x += gridSize) {
+                ctx.moveTo(x, cam.y);
+                ctx.lineTo(x, cam.y + canvasSize.height);
             }
-            for (let y = 0; y <= WORLD_HEIGHT; y += gridSize) {
-                ctx.moveTo(0, y); ctx.lineTo(WORLD_WIDTH, y);
+
+            const startY = Math.floor(cam.y / gridSize) * gridSize;
+            const endY = cam.y + canvasSize.height;
+            for (let y = startY; y <= endY; y += gridSize) {
+                ctx.moveTo(cam.x, y);
+                ctx.lineTo(cam.x + canvasSize.width, y);
             }
             ctx.stroke();
             ctx.setLineDash([]);
