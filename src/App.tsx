@@ -1,113 +1,23 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { RefreshCw, Paintbrush, Eraser, Move, Image as ImageIcon, Eye, EyeOff, Layers, Check, CircleDashed, Anchor, MousePointer2, Square, Undo, Redo, Circle, X, GripHorizontal, Info, Trash2, MapPin, Flag, Grid, Play, StopCircle, Video, Download, Upload } from 'lucide-react';
 import { CameraSystem } from './systems/CameraSystem';
+import * as Constants from './constants';
+import { Point, Enemy, Boulder, PlatformState, SelectionItem, Particle } from './types';
+import { getSlopeColor, getLayerColor, generateBoulderShape, getPointOnSpline } from './utils';
 
-// Replace constants with dynamic state in the component
-// const CANVAS_WIDTH = 800;
-// const CANVAS_HEIGHT = 600;
+// Destructure common constants for brevity
+const {
+    GRAVITY, FALL_GRAVITY_MULTIPLIER, JUMP_FORCE, MAX_MOVE_SPEED, ACCELERATION,
+    BRAKE_ACCELERATION, FRICTION, AIR_ACCELERATION, AIR_FRICTION, MIN_JUMP_GRAVITY,
+    WALL_BOUNCE, MAX_FALL_SPEED, COYOTE_FRAMES, JUMP_BUFFER_FRAMES, SLOPE_CHECK_DIST,
+    ANGLE_YELLOW_THRESHOLD, ANGLE_RED_THRESHOLD, MAX_GROUND_ANGLE, WORLD_WIDTH,
+    WORLD_HEIGHT, STEP_HEIGHT, BOULDER_FRICTION, BOULDER_SLOPE_ACCEL, PUSH_FORCE,
+    DESTRUCTION_SPEED_THRESHOLD, BLOCK_SIZE, PLAYER_WIDTH, PLAYER_HEIGHT,
+    DEFAULT_START_X, DEFAULT_START_Y, ASPECT_RATIO, CAMERA_LERP, DEAD_ZONE_W,
+    DEAD_ZONE_H, VERTICAL_OFFSET
+} = Constants;
 
 
-// --- PHYSICS CONSTANTS ---
-const GRAVITY = 0.82;
-const FALL_GRAVITY_MULTIPLIER = 2.15;
-const JUMP_FORCE = -9.8;
-const MAX_MOVE_SPEED = 9;
-const ACCELERATION = 1.4;
-const BRAKE_ACCELERATION = 3.6;
-const FRICTION = 0.72; // Increased traction (lower value = faster stop)
-const AIR_ACCELERATION = 0.8;
-const AIR_FRICTION = 0.98;
-const MIN_JUMP_GRAVITY = 0.38;
-const WALL_BOUNCE = 0.0;
-const MAX_FALL_SPEED = 15;
-const COYOTE_FRAMES = 10;
-const JUMP_BUFFER_FRAMES = 8; // Leeway for early jump presses
-const SLOPE_CHECK_DIST = 5;
-const ANGLE_YELLOW_THRESHOLD = 45 * (Math.PI / 180);
-const ANGLE_RED_THRESHOLD = 60 * (Math.PI / 180);
-const MAX_GROUND_ANGLE = 75 * (Math.PI / 180);
-const WORLD_WIDTH = 5120;
-const WORLD_HEIGHT = 2880;
-const STEP_HEIGHT = 16;
-
-// --- BOULDER CONSTANTS ---
-const BOULDER_FRICTION = 0.96;
-const BOULDER_SLOPE_ACCEL = 0.5;
-const PUSH_FORCE = 0.3;
-const DESTRUCTION_SPEED_THRESHOLD = 2.5;
-const BLOCK_SIZE = 20;
-
-// --- PLAYER CONSTANTS ---
-const PLAYER_WIDTH = 24;
-const PLAYER_HEIGHT = 32;
-const DEFAULT_START_X = 100;
-const DEFAULT_START_Y = 100;
-
-// --- TYPES ---
-interface Point { x: number; y: number; hit?: boolean; }
-interface Particle { x: number; y: number; vx: number; vy: number; life: number; color: string; }
-interface Enemy {
-    id: string;
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    width: number;
-    height: number;
-    isGrounded: boolean;
-    coyoteTimer: number;
-    onMovingPlatform: boolean;
-    direction: number;
-    speed: number;
-    rotation: number;
-    turnCooldown: number;
-}
-interface Boulder { x: number; y: number; vx: number; vy: number; r: number; mass: number; shape: Point[]; rotation: number; av: number; destroyed?: boolean; }
-interface PlatformState { t: number; x: number; y: number; vx: number; vy: number; active: boolean; direction: number; }
-interface Selection { type: string; index?: number; layer?: string;[key: string]: any; }
-
-// --- UTILS ---
-const getSlopeColor = (angle: number) => {
-    const angleDeg = angle * (180 / Math.PI);
-    if (angleDeg > 75) return 'rgba(255, 0, 0, 0.2)';
-    const t = Math.min(angleDeg / 60, 1);
-    const r = Math.floor(74 + (250 - 74) * t);
-    const g = Math.floor(222 + (204 - 222) * t);
-    const b = Math.floor(128 + (21 - 128) * t);
-    return `rgb(${r}, ${g}, ${b})`;
-};
-
-const getLayerColor = (layer: string) => {
-    switch (layer) {
-        case 'platform': return '#60a5fa';
-        case 'ceiling': return '#c026d3';
-        case 'wall': return '#ef4444';
-        case 'breakable': return '#9ca3af';
-        case 'enemy_wall': return '#06b6d4';
-        default: return '#ffffff';
-    }
-};
-
-const generateBoulderShape = (radius: number) => {
-    const points: Point[] = [];
-    const segments = 8;
-    for (let i = 0; i < segments; i++) {
-        const angle = (i / segments) * Math.PI * 2;
-        const r = radius * (0.8 + Math.random() * 0.4);
-        points.push({
-            x: Math.cos(angle) * r,
-            y: Math.sin(angle) * r
-        });
-    }
-    return points;
-};
-
-// --- CAMERA CONSTANTS ---
-const ASPECT_RATIO = 16 / 9;
-const CAMERA_LERP = 0.08; // Refined for "organic" feel
-const DEAD_ZONE_W = 120; // Larger refined dead zone
-const DEAD_ZONE_H = 80;
-const VERTICAL_OFFSET = -40; // Player slightly below center
 
 const App = () => {
     // --- UI STATE ---
@@ -134,7 +44,7 @@ const App = () => {
     const [projectLevels, setProjectLevels] = useState<string[]>([]);
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, dragging?: boolean, dragOffsetX?: number, dragOffsetY?: number } | null>(null);
-    const [selectedItem, setSelectedItem] = useState<Selection | null>(null);
+    const [selectedItem, setSelectedItem] = useState<SelectionItem | null>(null);
     const [isDraggingItem, setIsDraggingItem] = useState(false);
 
     const cursorPosRef = useRef<Point>({ x: -100, y: -100 });
@@ -198,6 +108,7 @@ const App = () => {
 
     const keysPressed = useRef<Record<string, boolean>>({});
     const lastPoint = useRef<Point | null>(null);
+    const isWorldInitializedRef = useRef(false);
 
     useEffect(() => {
         const resizeObserver = new ResizeObserver(entries => {
@@ -338,6 +249,7 @@ const App = () => {
                 }
 
                 setNotification("Level loaded successfully!");
+                isWorldInitializedRef.current = true;
                 saveState(); // Update undo history
             } catch (err) {
                 console.error("Failed to load level:", err);
@@ -444,6 +356,7 @@ const App = () => {
                 }
             }
             setNotification(`Loaded level: ${name}`);
+            isWorldInitializedRef.current = true;
             setIsDraggingItem(false);
             setSelectedItem(null);
             saveState();
@@ -850,6 +763,28 @@ const App = () => {
 
         const { x, y } = getPointerPos(e);
 
+        // Infinite Start Logic: Lock off world on first draw
+        if (!isWorldInitializedRef.current && toolMode !== 'select' && !isPanningRef.current) {
+            isWorldInitializedRef.current = true;
+            // Center the "world" under the current camera view
+            // We want the current view center to map to the center of our internal canvases
+            const cam = cameraRef.current.getState();
+            const centerX = cam.x + canvasSize.width / 2;
+            const centerY = cam.y + canvasSize.height / 2;
+
+            // Calculate shift to put (centerX, centerY) at (WORLD_WIDTH/2, WORLD_HEIGHT/2)
+            const shiftX = (WORLD_WIDTH / 2) - centerX;
+            const shiftY = (WORLD_HEIGHT / 2) - centerY;
+
+            // Shift camera and all persistent refs
+            cameraRef.current.pan(-shiftX, -shiftY, canvasSize, { width: WORLD_WIDTH, height: WORLD_HEIGHT });
+
+            // Re-calculate x,y for the current stroke after the shift
+            const newPos = getPointerPos(e);
+            draw(e); // Trigger first draw at new pos
+            return;
+        }
+
         if (toolMode === 'move_bg') {
             saveState();
             setIsDraggingItem(true);
@@ -1035,7 +970,7 @@ const App = () => {
         }
     };
 
-    const draw = (e) => {
+    const draw = (e: any) => {
         const { x, y } = getPointerPos(e);
 
         if (isDraggingItem && toolMode === 'move_bg') {
@@ -1083,7 +1018,7 @@ const App = () => {
                 if (lastPoint.current) {
                     const offsetX = lastPoint.current.x;
                     const offsetY = lastPoint.current.y;
-                    setSelectedItem(prev => prev ? ({ ...prev, x: x - offsetX, y: y - offsetY }) : null);
+                    setSelectedItem((prev: SelectionItem | null) => prev ? ({ ...prev, x: x - offsetX, y: y - offsetY }) : null);
                 }
             }
             return;
@@ -2392,7 +2327,7 @@ const App = () => {
                                             selectedItem?.type === 'platform' ? 'Platform' :
                                                 selectedItem?.type === 'spawn' ? 'Spawn Point' :
                                                     selectedItem?.type === 'goal' ? 'Goal Point' :
-                                                        selectedItem?.type === 'pixel_chunk' ? 'Selection' : 'Item'}
+                                                        selectedItem?.type === 'pixel_chunk' ? 'SelectionItem' : 'Item'}
                                     </span>
                                     <div className="flex gap-1">
                                         {selectedItem?.type !== 'spawn' && selectedItem?.type !== 'goal' && (
