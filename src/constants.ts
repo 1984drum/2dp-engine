@@ -17,8 +17,8 @@ export const SLOPE_CHECK_DIST = 5;
 export const ANGLE_YELLOW_THRESHOLD = 45 * (Math.PI / 180);
 export const ANGLE_RED_THRESHOLD = 60 * (Math.PI / 180);
 export const MAX_GROUND_ANGLE = 75 * (Math.PI / 180);
-export const WORLD_WIDTH = 10240;
-export const WORLD_HEIGHT = 5760;
+export const WORLD_WIDTH = 6400;
+export const WORLD_HEIGHT = 3600;
 export const STEP_HEIGHT = 16;
 
 // --- BOULDER CONSTANTS ---

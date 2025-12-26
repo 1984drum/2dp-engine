@@ -283,7 +283,17 @@ const App = () => {
             layers.forEach(layer => {
                 const canvas = layerCanvasesRef.current[layer];
                 if (canvas) {
-                    drawingData[layer] = canvas.toDataURL('image/png');
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    const pix = ctx?.getImageData(0, 0, canvas.width, canvas.height).data;
+                    let hasData = false;
+                    if (pix) {
+                        for (let i = 3; i < pix.length; i += 4) {
+                            if (pix[i] > 0) { hasData = true; break; }
+                        }
+                    }
+                    if (hasData) {
+                        drawingData[layer] = canvas.toDataURL('image/png');
+                    }
                 }
             });
 
