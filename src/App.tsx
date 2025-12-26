@@ -761,7 +761,7 @@ const App = () => {
             return;
         }
 
-        const { x, y } = getPointerPos(e);
+        let { x, y } = getPointerPos(e);
 
         // Infinite Start Logic: Lock off world on first draw
         if (!isWorldInitializedRef.current && toolMode !== 'select' && !isPanningRef.current) {
@@ -781,8 +781,8 @@ const App = () => {
 
             // Re-calculate x,y for the current stroke after the shift
             const newPos = getPointerPos(e);
-            draw(e); // Trigger first draw at new pos
-            return;
+            x = newPos.x;
+            y = newPos.y;
         }
 
         if (toolMode === 'move_bg') {
