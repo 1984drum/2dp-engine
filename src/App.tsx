@@ -1587,9 +1587,10 @@ const App = () => {
                 const checkWall = (sideX: number) => {
                     const points = [8, en.height * 0.5, en.height - 8]; // Buffered points
                     for (let pt of points) {
-                        // Enemies collide with walls and breakables
+                        // Enemies collide with walls, breakables, and enemy_walls
                         if (checkPixel(sideX, en.y + pt, 'wall') ||
-                            checkPixel(sideX, en.y + pt, 'breakable')) return true;
+                            checkPixel(sideX, en.y + pt, 'breakable') ||
+                            checkPixel(sideX, en.y + pt, 'enemy_wall')) return true;
                     }
                     return false;
                 };
@@ -1636,21 +1637,27 @@ const App = () => {
 
             // Stable Edge Detection
             if (grounded && en.turnCooldown === 0) {
-                // Check a bit further ahead
-                const lookAheadX = en.direction > 0 ? en.x + en.width + 5 : en.x - 5;
-                const lookAheadY = en.y + en.height + 10;
+                // Check just past the feet in the current direction
+                const lookAheadX = en.direction > 0 ? en.x + en.width + 1 : en.x - 1;
 
                 // Safety check for world bounds
                 if (lookAheadX < 0 || lookAheadX >= WORLD_WIDTH) {
                     en.direction *= -1;
                     en.turnCooldown = 20;
                 } else {
-                    const hasGround = checkPixel(lookAheadX, lookAheadY, 'ground') ||
-                        checkPixel(lookAheadX, lookAheadY, 'platform');
+                    // Check for ground in a vertical range to catch thin platforms
+                    let hasGround = false;
+                    const feetY = Math.floor(en.y + en.height);
+                    for (let y = feetY - 2; y < feetY + 15; y++) {
+                        if (checkPixel(lookAheadX, y, 'ground') || checkPixel(lookAheadX, y, 'platform')) {
+                            hasGround = true;
+                            break;
+                        }
+                    }
 
                     if (!hasGround) {
                         en.direction *= -1;
-                        en.turnCooldown = 20; // Longer cooldown for edges
+                        en.turnCooldown = 25; // Stop them from jittering at the very edge
                     }
                 }
             }
