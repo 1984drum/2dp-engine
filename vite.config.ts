@@ -22,17 +22,21 @@ const levelStorage = () => ({
                 req.on('end', () => {
                     try {
                         const body = Buffer.concat(chunks).toString();
+                        if (!body) throw new Error("Empty request body");
                         const { name, data } = JSON.parse(body);
+                        if (!name) throw new Error("Missing level name");
+
                         const dir = path.resolve(process.cwd(), 'levels');
                         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
                         const filePath = path.join(dir, `${name}.2de7`);
                         fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
                         console.log(`[API] Successfully saved level: ${name} (${Math.round(body.length / 1024)} KB)`);
+                        res.statusCode = 200;
                         res.end('ok');
-                    } catch (err) {
-                        console.error('[API] Save failed:', err);
+                    } catch (err: any) {
+                        console.error('[API] Save failed:', err.message);
                         res.statusCode = 500;
-                        res.end('fail');
+                        res.end(`fail: ${err.message}`);
                     }
                 });
             }

@@ -133,7 +133,7 @@ const App = () => {
     const [replayFrameIndex, setReplayFrameIndex] = useState(0);
     const [projectLevels, setProjectLevels] = useState<string[]>([]);
 
-    const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ x: number, y: number, dragging?: boolean, dragOffsetX?: number, dragOffsetY?: number } | null>(null);
     const [selectedItem, setSelectedItem] = useState<Selection | null>(null);
     const [isDraggingItem, setIsDraggingItem] = useState(false);
 
@@ -358,13 +358,15 @@ const App = () => {
     };
 
     const saveToProject = async () => {
-        const name = prompt("Enter level name:");
-        if (!name) return;
+        let name = prompt("Enter level name:");
+        if (name === null) return; // User cancelled
+        if (name === "") name = `level_${new Date().getTime()}`; // Fallback for empty name
 
         const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable', 'enemy_wall'];
         const drawingData: Record<string, string> = {};
 
         try {
+            setNotification(`Preparing "${name}"...`);
             layers.forEach(layer => {
                 const canvas = layerCanvasesRef.current[layer];
                 if (canvas) {
@@ -385,11 +387,10 @@ const App = () => {
                 }
             };
 
-
             const payload = JSON.stringify({ name, data: levelData });
             console.log(`[Save] Attempting to save "${name}". Payload size: ${Math.round(payload.length / 1024)} KB`);
 
-            setNotification(`Saving "${name}"...`);
+            setNotification(`Sending "${name}" to server...`);
             const res = await fetch('/api/save-level', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -397,12 +398,16 @@ const App = () => {
             });
 
             if (res.ok) {
+                const result = await res.text();
+                if (result.startsWith('fail:')) {
+                    throw new Error(result.substring(6));
+                }
                 console.log(`[Save] Successfully saved "${name}"`);
-                setNotification(`Saved ${name} to project!`);
+                setNotification(`Saved "${name}" to project!`);
                 await fetchProjectLevels();
             } else {
                 const errText = await res.text();
-                throw new Error(`Server responded with ${res.status}: ${errText}`);
+                throw new Error(`Server error (${res.status}): ${errText}`);
             }
         } catch (err: any) {
             console.error("[Save] Error during save process:", err);
@@ -676,7 +681,9 @@ const App = () => {
         let minX = w, maxX = 0, minY = h, maxY = 0;
 
         while (stack.length > 0) {
-            const [x, y] = stack.pop();
+            const popped = stack.pop();
+            if (!popped) continue;
+            const [x, y] = popped;
             const idx = y * w + x;
             if (x < 0 || x >= w || y < 0 || y >= h || visited[idx]) continue;
 
@@ -697,13 +704,17 @@ const App = () => {
         offCanvas.width = chunkW;
         offCanvas.height = chunkH;
         const offCtx = offCanvas.getContext('2d');
+        if (!offCtx) return null;
         const offImgData = offCtx.createImageData(chunkW, chunkH);
 
         chunkPixels.forEach(p => {
             const localX = p.x - minX;
             const localY = p.y - minY;
             const i = (localY * chunkW + localX) * 4;
-            offImgData.data[i] = p.r; offImgData.data[i + 1] = p.g; offImgData.data[i + 2] = p.b; offImgData.data[i + 3] = p.a;
+            offImgData.data[i] = p.r;
+            offImgData.data[i + 1] = p.g;
+            offImgData.data[i + 2] = p.b;
+            offImgData.data[i + 3] = p.a;
             const origIdx = (p.y * w + p.x) * 4;
             data[origIdx + 3] = 0;
         });
@@ -1469,7 +1480,7 @@ const App = () => {
 
         for (let i = 0; i < steps; i++) {
             p.x += stepSize;
-            const checkWallFullBody = (sideX) => {
+            const checkWallFullBody = (sideX: number) => {
                 const points = [5, p.height * 0.25, p.height * 0.5, p.height * 0.75, p.height - 5];
                 for (let pt of points) {
                     if (checkPixel(sideX, p.y + pt, 'wall') || checkPixel(sideX, p.y + pt, 'breakable')) return true;
@@ -1510,7 +1521,7 @@ const App = () => {
             const feetY = Math.floor(p.y + p.height);
             const lookDown = p.isGrounded ? STEP_HEIGHT : (Math.max(Math.ceil(p.vy), 4) + 2);
 
-            const checkPoint = (offsetX) => {
+            const checkPoint = (offsetX: number) => {
                 for (let y = feetY - STEP_HEIGHT; y < feetY + lookDown; y++) {
                     if (checkPixel(p.x + offsetX, y, 'ground')) return { y, type: 'ground' };
                     if (checkPixel(p.x + offsetX, y, 'platform')) {
@@ -2387,11 +2398,11 @@ const App = () => {
                                         <div className="flex flex-col gap-3">
                                             <div>
                                                 <label className="text-[10px] text-neutral-400 block mb-1.5 uppercase font-bold">Radius</label>
-                                                <input type="range" min="10" max="100" value={bouldersRef.current[selectedItem.index]?.r || 20} onChange={(e) => handleBoulderChange('r', e.target.value)} className="w-full h-1 accent-purple-500 bg-neutral-700 rounded-lg appearance-none cursor-pointer" />
+                                                <input type="range" min="10" max="100" value={(selectedItem.index !== undefined && bouldersRef.current[selectedItem.index]?.r) || 20} onChange={(e) => handleBoulderChange('r', e.target.value)} className="w-full h-1 accent-purple-500 bg-neutral-700 rounded-lg appearance-none cursor-pointer" />
                                             </div>
                                             <div>
                                                 <label className="text-[10px] text-neutral-400 block mb-1.5 uppercase font-bold">Mass</label>
-                                                <input type="range" min="0.1" max="10" step="0.1" value={bouldersRef.current[selectedItem.index]?.mass || 1} onChange={(e) => handleBoulderChange('mass', e.target.value)} className="w-full h-1 accent-purple-500 bg-neutral-700 rounded-lg appearance-none cursor-pointer" />
+                                                <input type="range" min="0.1" max="10" step="0.1" value={(selectedItem.index !== undefined && bouldersRef.current[selectedItem.index]?.mass) || 1} onChange={(e) => handleBoulderChange('mass', e.target.value)} className="w-full h-1 accent-purple-500 bg-neutral-700 rounded-lg appearance-none cursor-pointer" />
                                             </div>
                                         </div>
                                     )}
