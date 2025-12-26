@@ -26,7 +26,7 @@ const App = () => {
     const [isDrawing, setIsDrawing] = useState(false);
     const [isEditingPath, setIsEditingPath] = useState(false);
     const [debugMode, setDebugMode] = useState(false);
-    const [brushSize, setBrushSize] = useState(4);
+    const [brushSize] = useState(4); // Hardcoded to 4px as requested
     const [platformSpeed, setPlatformSpeed] = useState(1.0);
     const [showCollisions, setShowCollisions] = useState(true);
     const [showGrid, setShowGrid] = useState(true);
@@ -500,7 +500,7 @@ const App = () => {
     };
 
     const saveState = () => {
-        const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable'];
+        const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable', 'enemy_wall'];
         const layerData: Record<string, ImageData> = {};
         layers.forEach(l => {
             const ctx = layerCanvasesRef.current[l].getContext('2d');
@@ -832,7 +832,7 @@ const App = () => {
                     return;
                 }
             }
-            if (['ground', 'wall', 'ceiling', 'breakable'].includes(activeLayer) && visibleLayers[activeLayer]) {
+            if (['ground', 'wall', 'ceiling', 'breakable', 'enemy_wall'].includes(activeLayer) && visibleLayers[activeLayer]) {
                 const chunk = liftConnectedPixels(x, y, activeLayer);
                 if (chunk) {
                     setSelectedItem({ type: 'pixel_chunk', ...chunk });
@@ -937,7 +937,7 @@ const App = () => {
             draggingPointIndex.current = -1;
             changed = true;
         } else if (isDrawing) {
-            ['ground', 'wall', 'platform', 'ceiling', 'breakable'].forEach(l => updateCollisionData(l));
+            ['ground', 'wall', 'platform', 'ceiling', 'breakable', 'enemy_wall'].forEach(l => updateCollisionData(l));
             changed = true;
         }
         setIsDrawing(false);
@@ -1059,7 +1059,7 @@ const App = () => {
         if (!lastPoint.current) return;
 
         if (toolMode === 'eraser') {
-            const targets = activeLayer === 'platform' ? ['platform'] : ['ground', 'wall', 'ceiling', 'breakable'];
+            const targets = activeLayer === 'platform' ? ['platform'] : ['ground', 'wall', 'ceiling', 'breakable', 'enemy_wall'];
             targets.forEach(layer => {
                 const ctx = layerCanvasesRef.current[layer].getContext('2d');
                 if (ctx && lastPoint.current) {
@@ -1812,7 +1812,7 @@ const App = () => {
         }
 
         if (showCollisions) {
-            const layers = ['ground', 'wall', 'ceiling', 'breakable'] as const;
+            const layers = ['ground', 'wall', 'ceiling', 'breakable', 'enemy_wall'] as const;
             layers.forEach(layer => {
                 if (!visibleLayers[layer]) return;
                 const layerCanvas = layerCanvasesRef.current[layer];
@@ -2269,18 +2269,9 @@ const App = () => {
 
                         <div className="flex flex-col gap-2 p-3 bg-neutral-900/50 rounded-lg border border-neutral-700/50">
                             <label className="text-xs font-medium text-neutral-300 flex justify-between">
-                                <span>Brush Size</span>
-                                <span className="text-neutral-500 font-mono">{brushSize}px</span>
+                                <span className="text-sm font-semibold text-white">Brush Size</span>
+                                <span className="text-neutral-400 text-xs">Fixed to 4px</span>
                             </label>
-                            <input
-                                type="range"
-                                min="4"
-                                max="80"
-                                step="2"
-                                value={brushSize}
-                                onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                                className="accent-blue-500 h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer"
-                            />
                         </div>
                     </div>
 
