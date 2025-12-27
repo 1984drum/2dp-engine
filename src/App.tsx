@@ -6,6 +6,10 @@ import * as Physics from './systems/PhysicsSystem';
 import { Point, SelectionItem, Enemy, Player, Boulder, PlatformState, Particle } from './types';
 import { getSlopeColor, getLayerColor, generateBoulderShape, getPointOnSpline } from './utils';
 
+// Engine Architecture Imports
+import engineCore from './engine/EngineCore';
+import eventBus from './engine/core/EventBus';
+
 // Destructure common constants for brevity
 const {
     GRAVITY, FALL_GRAVITY_MULTIPLIER, JUMP_FORCE, MAX_MOVE_SPEED, ACCELERATION,
@@ -218,8 +222,9 @@ const App = () => {
         });
 
         const levelData = {
-            version: "1.0",
+            version: "1.1", // Bump version
             drawingData,
+            entities: engineCore.serialize().entities, // New ECS data
             metadata: {
                 spawnPoint: spawnPointRef.current,
                 goalPoint: goalPointRef.current,
@@ -335,8 +340,9 @@ const App = () => {
             });
 
             const levelData = {
-                version: "1.0",
+                version: "1.1", // Bump version
                 drawingData,
+                entities: engineCore.serialize().entities, // New ECS data
                 metadata: {
                     spawnPoint: spawnPointRef.current,
                     goalPoint: goalPointRef.current,
@@ -404,6 +410,10 @@ const App = () => {
             isWorldInitializedRef.current = true;
             setIsDraggingItem(false);
             setSelectedItem(null);
+
+            // modular engine sync
+            engineCore.loadLevel(levelData);
+
             saveState();
         } catch (err) {
             console.error("Load failed:", err);
@@ -465,6 +475,14 @@ const App = () => {
     const closeRenameModal = () => setRenameModal(prev => ({ ...prev, isOpen: false }));
 
     useEffect(() => {
+        // Initialize Engine Core with world dependencies
+        engineCore.init((x, y, layer) => checkPixel(x, y, layer));
+
+        // Subscribe to engine events
+        eventBus.on('ENTITY_GROUNDED', (id) => {
+            if (debugMode) console.log(`[Engine] Entity ${id} grounded`);
+        });
+
         const init = async () => {
             await fetchProjectLevels();
             // Auto-load demo-1 if it exists
@@ -496,13 +514,37 @@ const App = () => {
     };
 
     const respawnPlayer = () => {
+        let spawnedX = spawnPointRef.current ? spawnPointRef.current.x : DEFAULT_START_X;
+        let spawnedY = spawnPointRef.current ? spawnPointRef.current.y : DEFAULT_START_Y;
+
+        // --- Instant Ground Snap ---
+        // Iterate down until we hit ground or platform
+        let dropY = spawnedY;
+        const groundCheckOffset = 2; // Check slightly below
+        while (dropY < WORLD_HEIGHT - PLAYER_HEIGHT) {
+            const atGround = checkPixel(spawnedX + PLAYER_WIDTH / 2, dropY + PLAYER_HEIGHT + groundCheckOffset, 'ground');
+            const atPlatform = checkPixel(spawnedX + PLAYER_WIDTH / 2, dropY + PLAYER_HEIGHT + groundCheckOffset, 'platform');
+            if (atGround || atPlatform) break;
+            dropY += 4; // Scan in 4px steps for performance
+        }
+
+        // Fine-tune if we found ground
+        if (dropY < WORLD_HEIGHT - PLAYER_HEIGHT) {
+            for (let i = 0; i < 5; i++) {
+                const atGround = checkPixel(spawnedX + PLAYER_WIDTH / 2, dropY + PLAYER_HEIGHT + 1, 'ground');
+                const atPlatform = checkPixel(spawnedX + PLAYER_WIDTH / 2, dropY + PLAYER_HEIGHT + 1, 'platform');
+                if (atGround || atPlatform) break;
+                dropY += 1;
+            }
+        }
+
         playerRef.current = {
             ...playerRef.current,
-            x: spawnPointRef.current ? spawnPointRef.current.x : DEFAULT_START_X,
-            y: spawnPointRef.current ? spawnPointRef.current.y : DEFAULT_START_Y,
+            x: spawnedX,
+            y: dropY,
             vx: 0,
             vy: 0,
-            isGrounded: false,
+            isGrounded: true, // Snap assumed grounded
             coyoteTimer: 0,
             onMovingPlatform: false,
             jumpInputReady: true,
@@ -510,6 +552,27 @@ const App = () => {
             rotation: 0,
             debugSensors: []
         };
+
+        // Sync to Engine ECS
+        let playerEntity = engineCore.getPlayerEntity();
+        if (!playerEntity) {
+            playerEntity = engineCore.spawnPlayer(playerRef.current.x, playerRef.current.y);
+        }
+
+        if (playerEntity) {
+            const transform = playerEntity.components.get('transform') as any;
+            const physics = playerEntity.components.get('physics') as any;
+            if (transform) {
+                transform.x = playerRef.current.x;
+                transform.y = playerRef.current.y;
+            }
+            if (physics) {
+                physics.vx = 0;
+                physics.vy = 0;
+                physics.isGrounded = true;
+            }
+        }
+
         // Reset camera to player position
         cameraRef.current.reset(playerRef.current.x, playerRef.current.y, canvasSize, { width: WORLD_WIDTH, height: WORLD_HEIGHT });
     };
@@ -607,7 +670,9 @@ const App = () => {
 
         const snapshot = {
             layerData,
+            engineState: engineCore.serialize(), // SNAPSHOT ENGINE STATE
             boulders: JSON.parse(JSON.stringify(bouldersRef.current)),
+            enemies: JSON.parse(JSON.stringify(enemiesRef.current)),
             platformPath: JSON.parse(JSON.stringify(platformPathRef.current)),
             platformOffset: { ...platformOffsetRef.current },
             platformState: { ...platformStateRef.current },
@@ -620,7 +685,7 @@ const App = () => {
 
         const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
         newHistory.push(snapshot);
-        if (newHistory.length > 8) newHistory.shift();
+        if (newHistory.length > 20) newHistory.shift(); // Increased history depth
 
         historyRef.current = newHistory;
         historyIndexRef.current = newHistory.length - 1;
@@ -652,8 +717,15 @@ const App = () => {
                 updateCollisionData(l);
             }
         });
-        bouldersRef.current = JSON.parse(JSON.stringify(state.boulders));
-        platformPathRef.current = JSON.parse(JSON.stringify(state.platformPath));
+
+        // Restore Engine state
+        if (state.engineState) {
+            engineCore.loadLevel(state.engineState);
+        }
+
+        bouldersRef.current = JSON.parse(JSON.stringify(state.boulders || []));
+        enemiesRef.current = JSON.parse(JSON.stringify(state.enemies || []));
+        platformPathRef.current = JSON.parse(JSON.stringify(state.platformPath || []));
         platformOffsetRef.current = { ...state.platformOffset };
         platformStateRef.current = { ...state.platformState };
         platformBoundsRef.current = state.platformBounds ? { ...state.platformBounds } : null;
@@ -955,41 +1027,27 @@ const App = () => {
 
         if (toolMode === 'goal_place') {
             saveState();
-            goalPointRef.current = { x, y };
+            // Drop onto ground
+            let dropY = y;
+            while (dropY < WORLD_HEIGHT && !checkPixel(x, dropY, 'ground')) {
+                dropY++;
+            }
+            goalPointRef.current = { x, y: dropY - 2 };
             setToolMode('select');
             return;
         }
 
         if (toolMode === 'boulder_place') {
             saveState();
-            const newBoulder: Boulder = { x, y, r: 20, mass: 1.0, vx: 0, vy: 0, rotation: 0, av: 0, shape: generateBoulderShape(20) };
-            bouldersRef.current.push(newBoulder);
-            const idx = bouldersRef.current.length - 1;
-            setSelectedItem({ type: 'boulder', index: idx });
-            setContextMenu({ x: x + 40, y: y - 40 });
+            engineCore.spawnBoulder({ x, y, r: 20, mass: 1.0 });
+            // Sync happens in loop
             setToolMode('select');
             return;
         }
 
         if (toolMode === 'enemy_place') {
             saveState();
-            const newEnemy: Enemy = {
-                id: Math.random().toString(36).substr(2, 9),
-                x: x - 15,
-                y: y - 20,
-                vx: 0,
-                vy: 0,
-                width: 30,
-                height: 40,
-                isGrounded: false,
-                coyoteTimer: 0,
-                onMovingPlatform: false,
-                direction: 1, // Start Left to Right
-                speed: 1.5 + Math.random() * 1.5,
-                rotation: 0,
-                turnCooldown: 0
-            };
-            enemiesRef.current.push(newEnemy);
+            engineCore.spawnEnemy({ x: x - 15, y: y - 20, width: 30, height: 40 });
             // Tool stays active to allow multiple drops
             return;
         }
@@ -1602,6 +1660,12 @@ const App = () => {
     };
 
     useEffect(() => {
+        if (!isPaused && !isReplaying) {
+            engineCore.start();
+        } else {
+            engineCore.stop();
+        }
+
         let animationFrameId: number;
         const loop = () => {
             if (isReplaying) {
@@ -1621,12 +1685,45 @@ const App = () => {
                     replayIndexRef.current = 0;
                 }
             } else if (draggingPointIndex.current === -1 && !isDraggingItem && !isPaused) {
-                updatePlatformMovement();
-                updateBoulders();
-                updateParticles();
-                updateEnemyPhysics();
+                // The engine runs its own loop now via Kernel, 
+                // but we still call drawFrame here for the Editor sync.
+
+                // --- SYNC FROM ENGINE ---
+                const playerEntity = engineCore.getPlayerEntity();
+                if (playerEntity) {
+                    const transform = playerEntity.components.get('transform') as any;
+                    const physics = playerEntity.components.get('physics') as any;
+                    if (transform) {
+                        playerRef.current.x = transform.x;
+                        playerRef.current.y = transform.y;
+                    }
+                    if (physics) {
+                        playerRef.current.vx = physics.vx;
+                        playerRef.current.vy = physics.vy;
+                        playerRef.current.isGrounded = physics.isGrounded;
+                    }
+                }
+
+                // Sync Boulders
+                const boulderEntities = engineCore.getEntitiesByComponent('boulder');
+                bouldersRef.current = boulderEntities.map((e: any) => {
+                    const t = e.components.get('transform') as any;
+                    const b = e.components.get('boulder') as any;
+                    const p = e.components.get('physics') as any;
+                    return { x: t.x, y: t.y, r: b.r, rotation: t.rotation, vx: p.vx, vy: p.vy, mass: p.mass } as any;
+                });
+
+                // Sync Enemies
+                const enemyEntities = engineCore.getEntitiesByComponent('enemy');
+                enemiesRef.current = enemyEntities.map((e: any) => {
+                    const t = e.components.get('transform') as any;
+                    const p = e.components.get('physics') as any;
+                    const c = e.components.get('collider') as any;
+                    return { x: t.x, y: t.y, vx: p.vx, vy: p.vy, width: c.width, height: c.height, direction: Math.sign(p.vx) || 1 } as any;
+                });
+
                 if (spawnPointRef.current) {
-                    updatePhysics();
+                    // updatePhysics(); // NOW DRIVEN BY ENGINE
                     updateCamera();
                 }
 
@@ -1830,6 +1927,19 @@ const App = () => {
             const spawn = spawnPointRef.current;
             const isSpawnSelected = selectedItem?.type === 'spawn';
 
+            // Draw Spawn Marker (Red Cross)
+            const crossSize = 10;
+            ctx.strokeStyle = isSpawnSelected ? '#facc15' : '#ef4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            // Horizontal line
+            ctx.moveTo(spawn.x - crossSize, spawn.y);
+            ctx.lineTo(spawn.x + crossSize, spawn.y);
+            // Vertical line
+            ctx.moveTo(spawn.x, spawn.y - crossSize);
+            ctx.lineTo(spawn.x, spawn.y + crossSize);
+            ctx.stroke();
+
             // Draw actual player at their position
             const p = playerRef.current;
             ctx.save();
@@ -1839,17 +1949,9 @@ const App = () => {
             ctx.fillRect(-p.width / 2, -p.height / 2, p.width, p.height);
             // Eyes/Front indicator
             ctx.fillStyle = '#fff';
-            const faceDir = p.vx !== 0 ? Math.sign(p.vx) : 1;
+            const faceDir = (p.vx && p.vx !== 0) ? Math.sign(p.vx) : 1;
             ctx.fillRect(faceDir > 0 ? (p.width / 2 - 8) : (-p.width / 2 + 3), -5, 5, 5);
             ctx.restore();
-
-            // Draw Spawn Marker
-            ctx.strokeStyle = isSpawnSelected ? '#facc15' : '#ef4444';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(spawn.x, spawn.y, PLAYER_WIDTH, PLAYER_HEIGHT);
-            ctx.fillStyle = isSpawnSelected ? '#facc15' : '#ef4444';
-            ctx.font = '10px monospace';
-            ctx.fillText('SPAWN', spawn.x, spawn.y - 5);
         }
 
         if (visibleLayers.goal && goalPointRef.current) {
@@ -1859,7 +1961,8 @@ const App = () => {
             ctx.translate(goal.x, goal.y);
             ctx.fillStyle = '#facc15';
             ctx.beginPath();
-            ctx.moveTo(0, 0); ctx.lineTo(15, -10); ctx.lineTo(0, -20);
+            // Flag at top of 30px pole
+            ctx.moveTo(0, -30); ctx.lineTo(15, -20); ctx.lineTo(0, -10);
             ctx.fill();
             ctx.strokeStyle = isGoalSelected ? '#fff' : '#a16207';
             ctx.lineWidth = 2;
@@ -2072,20 +2175,20 @@ const App = () => {
                         </button>
                     </div>
 
-                    <div className="flex items-center gap-3 bg-neutral-900/50 px-3 py-1.5 rounded-lg border border-neutral-700">
+                    <button
+                        onClick={() => setIsPaused(!isPaused)}
+                        className="flex items-center gap-3 bg-neutral-900/50 hover:bg-neutral-800 px-3 py-1.5 rounded-lg border border-neutral-700 transition-all group"
+                    >
                         <div className="flex items-center gap-2">
                             <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]' : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]'} transition-all`}></div>
-                            <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400 group-hover:text-white">
                                 {isPaused ? 'PAUSED (Edit)' : 'RUNNING (Play)'}
                             </span>
                         </div>
-                        <button
-                            onClick={() => setIsPaused(!isPaused)}
-                            className="bg-neutral-800 hover:bg-neutral-700 p-1.5 rounded transition-colors group shadow-inner"
-                        >
+                        <div className="bg-neutral-800 group-hover:bg-neutral-700 p-1.5 rounded transition-colors shadow-inner">
                             {isPaused ? <PlayCircle size={14} className="text-green-500 fill-current" /> : <Pause size={14} className="text-orange-500 fill-current" />}
-                        </button>
-                    </div>
+                        </div>
+                    </button>
 
                     <button
                         onClick={resetGame}

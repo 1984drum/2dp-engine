@@ -1,18 +1,18 @@
 // --- PHYSICS CONSTANTS ---
-export const GRAVITY = 0.82;
-export const FALL_GRAVITY_MULTIPLIER = 2.15;
-export const JUMP_FORCE = -9.8;
-export const MAX_MOVE_SPEED = 9;
-export const ACCELERATION = 1.4;
-export const BRAKE_ACCELERATION = 3.6;
-export const FRICTION = 0.72; // Increased traction (lower value = faster stop)
-export const AIR_ACCELERATION = 0.8;
+export const GRAVITY = 0.35; // Lower for floaty ascent
+export const FALL_GRAVITY_MULTIPLIER = 3.2; // Fast fall to contrast floaty jump
+export const JUMP_FORCE = -12.5; // Snappier start
+export const MAX_MOVE_SPEED = 2.6; // Slightly faster for responsiveness
+export const ACCELERATION = 0.22;
+export const BRAKE_ACCELERATION = 0.45; // Slightly slower braking for "slip"
+export const FRICTION = 0.92; // Less ground friction = more slip
+export const AIR_ACCELERATION = 0.35; // Responsive air control
 export const AIR_FRICTION = 0.98;
-export const MIN_JUMP_GRAVITY = 0.38;
+export const MIN_JUMP_GRAVITY = 1.8; // Not directly used in current system, but keeping for reference
 export const WALL_BOUNCE = 0.0;
-export const MAX_FALL_SPEED = 15;
+export const MAX_FALL_SPEED = 14;
 export const COYOTE_FRAMES = 10;
-export const JUMP_BUFFER_FRAMES = 8; // Leeway for early jump presses
+export const JUMP_BUFFER_FRAMES = 12;
 export const SLOPE_CHECK_DIST = 5;
 export const ANGLE_YELLOW_THRESHOLD = 45 * (Math.PI / 180);
 export const ANGLE_RED_THRESHOLD = 60 * (Math.PI / 180);
