@@ -2100,7 +2100,7 @@ const App = () => {
                 {/* Left Side: Logo, History, Save, Tools */}
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2 font-bold text-lg bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-                        2D ENGINE V7
+                        2D ENGINE V8
                     </div>
                     <div className="h-6 w-px bg-neutral-700"></div>
 
