@@ -1707,7 +1707,7 @@ const App = () => {
                     setIsReplaying(false);
                     replayIndexRef.current = 0;
                 }
-            } else if (draggingPointIndex.current === -1 && !isDraggingItem && !isPaused) {
+            } else if (draggingPointIndex.current === -1 && !isDraggingItem) {
                 // The engine runs its own loop now via Kernel, 
                 // but we still call drawFrame here for the Editor sync.
 
@@ -1750,7 +1750,7 @@ const App = () => {
                     updateCamera();
                 }
 
-                if (isRecording) {
+                if (isRecording && !isPaused) {
                     recordedFramesRef.current.push({
                         px: playerRef.current.x,
                         py: playerRef.current.y,
