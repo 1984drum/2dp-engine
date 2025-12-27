@@ -40,6 +40,31 @@ const levelStorage = () => ({
                     }
                 });
             }
+            else if (req.url === '/api/delete-level' && req.method === 'POST') {
+                let chunks: any[] = [];
+                req.on('data', chunk => chunks.push(chunk));
+                req.on('end', () => {
+                    try {
+                        const body = Buffer.concat(chunks).toString();
+                        const { name } = JSON.parse(body);
+                        if (!name) throw new Error("Missing level name");
+
+                        const filePath = path.resolve(process.cwd(), 'levels', `${name}.2de7`);
+                        if (fs.existsSync(filePath)) {
+                            fs.unlinkSync(filePath);
+                            console.log(`[API] Successfully deleted level: ${name}`);
+                            res.statusCode = 200;
+                            res.end('ok');
+                        } else {
+                            throw new Error("Level not found");
+                        }
+                    } catch (err: any) {
+                        console.error('[API] Delete failed:', err.message);
+                        res.statusCode = 500;
+                        res.end(`fail: ${err.message}`);
+                    }
+                });
+            }
             else if (req.url?.startsWith('/api/load-level') && req.method === 'GET') {
                 const url = new URL(req.url, `http://${req.headers.host}`);
                 const name = url.searchParams.get('name');

@@ -45,6 +45,20 @@ const App = () => {
     const [projectLevels, setProjectLevels] = useState<string[]>([]);
     const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
     const [saveLevelName, setSaveLevelName] = useState("");
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean,
+        title: string,
+        message: string,
+        onConfirm: () => void,
+        confirmText?: string,
+        cancelText?: string,
+        isDanger?: boolean
+    }>({
+        isOpen: false,
+        title: "",
+        message: "",
+        onConfirm: () => { }
+    });
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, dragging?: boolean, dragOffsetX?: number, dragOffsetY?: number } | null>(null);
     const [selectedItem, setSelectedItem] = useState<SelectionItem | null>(null);
@@ -373,7 +387,7 @@ const App = () => {
                     });
                 }
             }
-            setNotification(`Loaded level: ${name}`);
+            setNotification(`Level "${name}" loaded!`);
             isWorldInitializedRef.current = true;
             setIsDraggingItem(false);
             setSelectedItem(null);
@@ -383,6 +397,32 @@ const App = () => {
             setNotification("Failed to load level from project.");
         }
     };
+
+    const deleteLevelFromProject = async (name: string) => {
+        try {
+            setNotification(`Deleting "${name}"...`);
+            const res = await fetch('/api/delete-level', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+
+            if (res.ok) {
+                const result = await res.text();
+                if (result.startsWith('fail:')) throw new Error(result.substring(6));
+                setNotification(`Level "${name}" deleted.`);
+                await fetchProjectLevels();
+            } else {
+                const errText = await res.text();
+                throw new Error(`Server error (${res.status}): ${errText}`);
+            }
+        } catch (err: any) {
+            console.error("[Delete] Error:", err);
+            setNotification(`Delete failed: ${err.message}`);
+        }
+    };
+
+    const closeConfirmModal = () => setConfirmModal(prev => ({ ...prev, isOpen: false }));
 
     useEffect(() => {
         const init = async () => {
@@ -2068,13 +2108,38 @@ const App = () => {
                                 </div>
                             ) : (
                                 projectLevels.map(name => (
-                                    <div key={name} className="group flex items-center justify-between p-2 rounded bg-neutral-900/50 hover:bg-neutral-700 transition-all border border-transparent hover:border-neutral-600">
-                                        <span className="text-xs truncate max-w-[120px]" title={name}>{name}</span>
+                                    <div key={name} className="group flex items-center gap-2 p-1.5 rounded bg-neutral-900/40 hover:bg-neutral-800 transition-all border border-neutral-800 hover:border-neutral-700">
                                         <button
-                                            onClick={() => loadFromProject(name)}
-                                            className="px-2 py-1 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white text-[10px] rounded transition-all opacity-0 group-hover:opacity-100 font-bold"
+                                            onClick={() => setConfirmModal({
+                                                isOpen: true,
+                                                title: "Delete Level",
+                                                message: `Are you sure you want to permanently delete "${name}"?`,
+                                                onConfirm: () => deleteLevelFromProject(name),
+                                                confirmText: "Delete",
+                                                isDanger: true
+                                            })}
+                                            className="p-1 text-neutral-600 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
+                                            title="Delete Level"
                                         >
-                                            LOAD
+                                            <Trash2 size={12} />
+                                        </button>
+
+                                        <span className="flex-1 text-[11px] font-medium text-neutral-400 group-hover:text-neutral-200 truncate" title={name}>
+                                            {name}
+                                        </span>
+
+                                        <button
+                                            onClick={() => setConfirmModal({
+                                                isOpen: true,
+                                                title: "Load Level",
+                                                message: `Discard current changes and load "${name}"?`,
+                                                onConfirm: () => loadFromProject(name),
+                                                confirmText: "Load"
+                                            })}
+                                            className="p-1 text-neutral-600 hover:text-blue-400 transition-all opacity-0 group-hover:opacity-100"
+                                            title="Load Level"
+                                        >
+                                            <Play size={12} fill="currentColor" />
                                         </button>
                                     </div>
                                 ))
@@ -2267,6 +2332,36 @@ const App = () => {
                     <div className="h-6 w-px bg-neutral-700"></div>
                 </div>
             </div>
+
+            {confirmModal.isOpen && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-neutral-900 border border-neutral-700 w-[400px] rounded-2xl p-6 shadow-2xl scale-in-center">
+                        <h2 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
+                            {confirmModal.isDanger && <Trash2 size={20} className="text-red-500" />}
+                            {!confirmModal.isDanger && <Play size={20} className="text-blue-400" fill="currentColor" />}
+                            {confirmModal.title}
+                        </h2>
+                        <p className="text-neutral-400 text-sm mb-8 leading-relaxed">
+                            {confirmModal.message}
+                        </p>
+
+                        <div className="flex gap-3">
+                            <button
+                                onClick={closeConfirmModal}
+                                className="flex-1 px-4 py-3 rounded-xl bg-neutral-800 hover:bg-neutral-750 text-neutral-400 font-bold text-sm transition-all border border-neutral-700/50"
+                            >
+                                {confirmModal.cancelText || "No"}
+                            </button>
+                            <button
+                                onClick={() => { confirmModal.onConfirm(); closeConfirmModal(); }}
+                                className={`flex-[1.5] px-4 py-3 rounded-xl text-white font-bold text-sm transition-all shadow-lg ${confirmModal.isDanger ? 'bg-red-600 hover:bg-red-500 shadow-red-900/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'}`}
+                            >
+                                {confirmModal.confirmText || "Yes"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {isSaveModalOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
