@@ -2109,12 +2109,6 @@ const App = () => {
                             )}
                         </div>
 
-                        <div className="flex flex-col gap-2 p-3 bg-neutral-900/50 rounded-lg border border-neutral-700/50">
-                            <label className="text-xs font-medium text-neutral-300 flex justify-between">
-                                <span className="text-sm font-semibold text-white">Brush Size</span>
-                                <span className="text-neutral-400 text-xs">Fixed to 4px</span>
-                            </label>
-                        </div>
                     </div>
 
                     <div className="mt-auto flex flex-col gap-2 pt-4">
