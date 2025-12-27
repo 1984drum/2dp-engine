@@ -333,7 +333,7 @@ const App = () => {
                     throw new Error(result.substring(6));
                 }
                 console.log(`[Save] Successfully saved "${name}"`);
-                setNotification(`Saved "${name}" to project!`);
+                setNotification(`Level "${name}" saved!`);
                 await fetchProjectLevels();
             } else {
                 const errText = await res.text();
@@ -1927,20 +1927,8 @@ const App = () => {
 
                     <div className="flex gap-1">
                         <button onClick={saveToProject} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm transition-all shadow-lg" title="Save current level to project folder">
-                            <Download size={16} /> Save to Project
+                            <Download size={16} /> Save
                         </button>
-                    </div>
-
-                    <div className="h-6 w-px bg-neutral-700 mx-2"></div>
-
-                    <div className="flex gap-1">
-                        <button onClick={saveLevel} className="flex items-center gap-2 px-3 py-1.5 text-neutral-400 hover:bg-neutral-700 hover:text-white rounded text-sm transition-colors" title="Export Level as .2de7 file">
-                            Export
-                        </button>
-                        <label className="flex items-center gap-2 px-3 py-1.5 text-neutral-400 hover:bg-neutral-700 hover:text-white rounded text-sm transition-colors cursor-pointer" title="Import Level from .2de7 file">
-                            Import
-                            <input type="file" accept=".2de7" className="hidden" onChange={loadLevel} />
-                        </label>
                     </div>
                 </div>
 
@@ -2316,7 +2304,7 @@ const App = () => {
                                     onClick={confirmSaveToProject}
                                     className="flex-[1.5] px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(37,99,235,0.3)]"
                                 >
-                                    Save to Project
+                                    Save
                                 </button>
                             </div>
                         </div>
