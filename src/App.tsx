@@ -43,6 +43,8 @@ const App = () => {
     const [isReplaying, setIsReplaying] = useState(false);
     const [replayFrameIndex, setReplayFrameIndex] = useState(0);
     const [projectLevels, setProjectLevels] = useState<string[]>([]);
+    const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+    const [saveLevelName, setSaveLevelName] = useState("");
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, dragging?: boolean, dragOffsetX?: number, dragOffsetY?: number } | null>(null);
     const [selectedItem, setSelectedItem] = useState<SelectionItem | null>(null);
@@ -270,9 +272,14 @@ const App = () => {
         }
     };
 
-    const saveToProject = async () => {
-        let name = prompt("Enter level name:");
-        if (name === null) return; // User cancelled
+    const saveToProject = () => {
+        setSaveLevelName(`level_${new Date().getTime()}`);
+        setIsSaveModalOpen(true);
+    };
+
+    const confirmSaveToProject = async () => {
+        let name = saveLevelName || `level_${new Date().getTime()}`;
+        setIsSaveModalOpen(false);
         if (name === "") name = `level_${new Date().getTime()}`; // Fallback for empty name
 
         const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable', 'enemy_wall'];
@@ -2272,6 +2279,50 @@ const App = () => {
                     <div className="h-6 w-px bg-neutral-700"></div>
                 </div>
             </div>
+
+            {isSaveModalOpen && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-neutral-900 border border-neutral-700 w-96 rounded-2xl p-6 shadow-2xl scale-in-center">
+                        <h2 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
+                            <Download className="text-blue-400" size={20} /> Save Level
+                        </h2>
+                        <p className="text-neutral-400 text-sm mb-6">Give your creation a name to store it in the project library.</p>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest block mb-1.5 ml-1">Level Name</label>
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    value={saveLevelName}
+                                    onChange={(e) => setSaveLevelName(e.target.value)}
+                                    placeholder="e.g. My Epic Level"
+                                    className="w-full bg-black border border-neutral-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-neutral-700"
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') confirmSaveToProject();
+                                        if (e.key === 'Escape') setIsSaveModalOpen(false);
+                                    }}
+                                />
+                            </div>
+
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    onClick={() => setIsSaveModalOpen(false)}
+                                    className="flex-1 px-4 py-3 rounded-xl bg-neutral-800 hover:bg-neutral-750 text-neutral-400 font-bold text-sm transition-all border border-neutral-700/50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmSaveToProject}
+                                    className="flex-[1.5] px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(37,99,235,0.3)]"
+                                >
+                                    Save to Project
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <input ref={bgInputRef} type="file" accept="image/*" onChange={handleBgUpload} className="hidden" />
             <input ref={fgInputRef} type="file" accept="image/*" onChange={handleFgUpload} className="hidden" />

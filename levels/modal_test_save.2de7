@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "drawingData": {},
+  "metadata": {
+    "spawnPoint": null,
+    "goalPoint": null,
+    "boulders": [],
+    "enemies": [],
+    "platformPath": [],
+    "platformOffset": {
+      "x": 0,
+      "y": 0
+    }
+  }
+}
