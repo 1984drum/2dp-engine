@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { RefreshCw, Paintbrush, Eraser, Move, Image as ImageIcon, Eye, EyeOff, Layers, Check, CircleDashed, Anchor, MousePointer2, Square, Undo, Redo, Circle, X, GripHorizontal, Info, Trash2, MapPin, Flag, Grid, Play, StopCircle, Video, Download, Upload } from 'lucide-react';
+import { RefreshCw, Paintbrush, Eraser, Move, Image as ImageIcon, Eye, EyeOff, Layers, Check, CircleDashed, Anchor, MousePointer2, Square, Undo, Redo, Circle, X, GripHorizontal, Info, Trash2, MapPin, Flag, Grid, Play, StopCircle, Video, Download, Upload, Save, Edit3, RotateCcw, Pause, PlayCircle } from 'lucide-react';
 import { CameraSystem } from './systems/CameraSystem';
 import * as Constants from './constants';
 import * as Physics from './systems/PhysicsSystem';
@@ -43,6 +43,7 @@ const App = () => {
     const [isReplaying, setIsReplaying] = useState(false);
     const [replayFrameIndex, setReplayFrameIndex] = useState(0);
     const [projectLevels, setProjectLevels] = useState<string[]>([]);
+    const [activeLevelName, setActiveLevelName] = useState<string | null>(null);
     const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
     const [saveLevelName, setSaveLevelName] = useState("");
     const [confirmModal, setConfirmModal] = useState<{
@@ -58,6 +59,16 @@ const App = () => {
         title: "",
         message: "",
         onConfirm: () => { }
+    });
+
+    const [renameModal, setRenameModal] = useState<{
+        isOpen: boolean,
+        oldName: string,
+        newName: string
+    }>({
+        isOpen: false,
+        oldName: "",
+        newName: ""
     });
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, dragging?: boolean, dragOffsetX?: number, dragOffsetY?: number } | null>(null);
@@ -286,15 +297,20 @@ const App = () => {
         }
     };
 
-    const saveToProject = () => {
-        setSaveLevelName(`level_${new Date().getTime()}`);
-        setIsSaveModalOpen(true);
+    const saveToProject = (presetName?: string) => {
+        if (presetName) {
+            setSaveLevelName(presetName);
+            confirmSaveToProject(presetName);
+        } else {
+            setSaveLevelName(activeLevelName || `level_${new Date().getTime()}`);
+            setIsSaveModalOpen(true);
+        }
     };
 
-    const confirmSaveToProject = async () => {
-        let name = saveLevelName || `level_${new Date().getTime()}`;
+    const confirmSaveToProject = async (overrideName?: string) => {
+        let name = overrideName || saveLevelName || `level_${new Date().getTime()}`;
         setIsSaveModalOpen(false);
-        if (name === "") name = `level_${new Date().getTime()}`; // Fallback for empty name
+        if (name === "") name = `level_${new Date().getTime()}`;
 
         const layers = ['ground', 'platform', 'wall', 'ceiling', 'breakable', 'enemy_wall'];
         const drawingData: Record<string, string> = {};
@@ -332,8 +348,6 @@ const App = () => {
             };
 
             const payload = JSON.stringify({ name, data: levelData });
-            console.log(`[Save] Attempting to save "${name}". Payload size: ${Math.round(payload.length / 1024)} KB`);
-
             setNotification(`Sending "${name}" to server...`);
             const res = await fetch('/api/save-level', {
                 method: 'POST',
@@ -343,18 +357,16 @@ const App = () => {
 
             if (res.ok) {
                 const result = await res.text();
-                if (result.startsWith('fail:')) {
-                    throw new Error(result.substring(6));
-                }
-                console.log(`[Save] Successfully saved "${name}"`);
+                if (result.startsWith('fail:')) throw new Error(result.substring(6));
                 setNotification(`Level "${name}" saved!`);
+                setActiveLevelName(name); // Track the active level
                 await fetchProjectLevels();
             } else {
                 const errText = await res.text();
                 throw new Error(`Server error (${res.status}): ${errText}`);
             }
         } catch (err: any) {
-            console.error("[Save] Error during save process:", err);
+            console.error("[Save] Error:", err);
             setNotification(`Save failed: ${err.message || 'Unknown error'}`);
         }
     };
@@ -388,6 +400,7 @@ const App = () => {
                 }
             }
             setNotification(`Level "${name}" loaded!`);
+            setActiveLevelName(name); // Track the active level
             isWorldInitializedRef.current = true;
             setIsDraggingItem(false);
             setSelectedItem(null);
@@ -422,7 +435,34 @@ const App = () => {
         }
     };
 
+    const renameLevelInProject = async (oldName: string, newName: string) => {
+        if (!newName || oldName === newName) return;
+        try {
+            setNotification(`Renaming "${oldName}" to "${newName}"...`);
+            const res = await fetch('/api/rename-level', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ oldName, newName })
+            });
+
+            if (res.ok) {
+                const result = await res.text();
+                if (result.startsWith('fail:')) throw new Error(result.substring(6));
+                setNotification(`Level renamed to "${newName}".`);
+                if (activeLevelName === oldName) setActiveLevelName(newName);
+                await fetchProjectLevels();
+            } else {
+                const errText = await res.text();
+                throw new Error(`Server error (${res.status}): ${errText}`);
+            }
+        } catch (err: any) {
+            console.error("[Rename] Error:", err);
+            setNotification(`Rename failed: ${err.message}`);
+        }
+    };
+
     const closeConfirmModal = () => setConfirmModal(prev => ({ ...prev, isOpen: false }));
+    const closeRenameModal = () => setRenameModal(prev => ({ ...prev, isOpen: false }));
 
     useEffect(() => {
         const init = async () => {
@@ -1952,73 +1992,107 @@ const App = () => {
             )}
 
             {/* TOP BAR */}
+            {/* Header */}
             <div className="h-14 shrink-0 bg-neutral-800 border-b border-neutral-700 flex items-center justify-between px-4 z-30 shadow-md">
+                {/* Left Side: Logo, History, Save, Tools */}
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2 font-bold text-lg bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
                         2D ENGINE V7
                     </div>
                     <div className="h-6 w-px bg-neutral-700"></div>
+
                     <div className="flex gap-1">
                         <button onClick={undo} disabled={!canUndo} className={`p-2 rounded transition-all ${canUndo ? 'hover:bg-neutral-700 text-white' : 'text-neutral-600 cursor-not-allowed'}`} title="Undo"><Undo size={18} /></button>
                         <button onClick={redo} disabled={!canRedo} className={`p-2 rounded transition-all ${canRedo ? 'hover:bg-neutral-700 text-white' : 'text-neutral-600 cursor-not-allowed'}`} title="Redo"><Redo size={18} /></button>
                     </div>
 
-                    <div className="h-6 w-px bg-neutral-700 mx-2"></div>
+                    <div className="h-6 w-px bg-neutral-700 mx-1"></div>
 
-                    <div className="flex gap-1">
-                        <button onClick={saveToProject} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm transition-all shadow-lg" title="Save current level to project folder">
-                            <Download size={16} /> Save
+                    <button onClick={() => saveToProject()} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm transition-all shadow-lg" title="Save current level">
+                        <Download size={16} /> Save
+                    </button>
+
+                    <div className="h-6 w-px bg-neutral-700 mx-1"></div>
+
+                    {/* Tools moved here */}
+                    <div className="flex bg-black/40 p-0.5 rounded-lg border border-neutral-700">
+                        <button
+                            onClick={() => { setToolMode('select'); setSelectedItem(null); }}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${toolMode === 'select' ? 'bg-neutral-700 text-white shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
+                        >
+                            <MousePointer2 size={12} /> Select
+                        </button>
+                        <button
+                            onClick={() => setToolMode('brush')}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${toolMode === 'brush' ? 'bg-blue-600 text-white shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
+                        >
+                            <Paintbrush size={12} /> Brush
+                        </button>
+                        <button
+                            onClick={() => setToolMode('eraser')}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${toolMode === 'eraser' ? 'bg-red-900/40 text-red-500 shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
+                        >
+                            <Eraser size={12} /> Eraser
                         </button>
                     </div>
                 </div>
 
+                {/* Center: Level Name */}
+                <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-3">
+                    <button
+                        onClick={() => setRenameModal({ isOpen: true, oldName: activeLevelName || "Untitled Level", newName: activeLevelName || "" })}
+                        className="group flex items-center gap-2 px-4 py-1.5 rounded-full bg-black/20 hover:bg-black/40 border border-neutral-700/50 transition-all cursor-pointer"
+                        title="Click to rename level"
+                    >
+                        <span className="text-sm font-black tracking-[0.2em] text-neutral-300 uppercase group-hover:text-white transition-colors">
+                            {activeLevelName || "UNTITLED LEVEL"}
+                        </span>
+                        <div className="p-1 rounded-full bg-neutral-800 text-neutral-500 group-hover:text-blue-400 group-hover:bg-neutral-700 transition-all">
+                            <Edit3 size={10} />
+                        </div>
+                    </button>
+                </div>
+
+                {/* Right Side: Replay, Status, Reset */}
                 <div className="flex items-center gap-4">
-                    <div className="flex gap-1 p-1 bg-neutral-900 rounded-lg">
-                        <button onClick={() => setToolMode('select')} className={`px-3 py-1.5 rounded flex items-center gap-2 text-sm transition-all ${toolMode === 'select' ? 'bg-neutral-700 text-white shadow-inner' : 'text-neutral-500 hover:text-white'}`}>
-                            <MousePointer2 size={16} /> Select
+                    {/* Replay icons moved here */}
+                    <div className="flex gap-1 pr-2 border-r border-neutral-700">
+                        <button
+                            onClick={toggleRecording}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all ${isRecording ? 'bg-red-600 text-white animate-pulse' : 'text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}
+                        >
+                            <Video size={14} /> RECORD
                         </button>
-                        <button onClick={() => setToolMode('brush')} className={`px-3 py-1.5 rounded flex items-center gap-2 text-sm transition-all ${toolMode === 'brush' ? 'bg-neutral-700 text-white shadow-inner' : 'text-neutral-500 hover:text-white'}`}>
-                            <Paintbrush size={16} /> Brush
-                        </button>
-                        <button onClick={() => setToolMode('eraser')} className={`px-3 py-1.5 rounded flex items-center gap-2 text-sm transition-all ${toolMode === 'eraser' ? 'bg-red-900/50 text-red-200 ring-1 ring-red-500/50' : 'text-neutral-500 hover:text-white'}`}>
-                            <Eraser size={16} /> Eraser
+                        <button
+                            onClick={toggleReplay}
+                            disabled={recordedFramesRef.current.length === 0 || isReplaying}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all ${(recordedFramesRef.current.length === 0 || isReplaying) ? 'text-neutral-600 cursor-not-allowed' : 'text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}
+                        >
+                            <PlayCircle size={14} /> WATCH REPLAY
                         </button>
                     </div>
-                </div>
 
-                <div className="flex items-center gap-2 border-l border-neutral-700 ml-1 pl-4 mr-1">
-                    <button
-                        onClick={toggleRecording}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm transition-all ${isRecording ? 'bg-red-600/20 text-red-400 border border-red-500/50 blink' : 'text-neutral-300 hover:bg-neutral-700 hover:text-white'}`}
-                        title={isRecording ? "Stop Recording" : "Record Session"}
-                    >
-                        {isRecording ? <StopCircle size={16} /> : <Video size={16} />}
-                        {isRecording ? "STOP" : "RECORD"}
-                    </button>
-
-                    <button
-                        onClick={toggleReplay}
-                        disabled={isRecording || recordedFramesRef.current.length === 0}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm transition-all ${isReplaying ? 'bg-blue-600/20 text-blue-400 border border-blue-500/50' : 'text-neutral-300 hover:bg-neutral-700 hover:text-white disabled:opacity-30'}`}
-                        title={isReplaying ? "Stop Replay" : "Watch Replay"}
-                    >
-                        {isReplaying ? <StopCircle size={16} /> : <Play size={16} />}
-                        {isReplaying ? "STOP" : "WATCH REPLAY"}
-                    </button>
-
-                    {recordedFramesRef.current.length > 0 && !isRecording && !isReplaying && (
-                        <button onClick={clearRecording} className="p-1.5 text-neutral-500 hover:text-red-400 transition-colors" title="Clear Recording">
-                            <Trash2 size={16} />
+                    <div className="flex items-center gap-3 bg-neutral-900/50 px-3 py-1.5 rounded-lg border border-neutral-700">
+                        <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]' : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]'} transition-all`}></div>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
+                                {isPaused ? 'PAUSED (Edit)' : 'RUNNING (Play)'}
+                            </span>
+                        </div>
+                        <button
+                            onClick={() => setIsPaused(!isPaused)}
+                            className="bg-neutral-800 hover:bg-neutral-700 p-1.5 rounded transition-colors group shadow-inner"
+                        >
+                            {isPaused ? <PlayCircle size={14} className="text-green-500 fill-current" /> : <Pause size={14} className="text-orange-500 fill-current" />}
                         </button>
-                    )}
-                </div>
+                    </div>
 
-                <div className="flex items-center gap-3">
-                    <button onClick={() => setIsPaused(!isPaused)} className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm transition-all ${isPaused ? 'bg-orange-600/20 text-orange-400 border border-orange-500/50 hover:bg-orange-600/30' : 'bg-green-600/20 text-green-400 border border-green-500/50 hover:bg-green-600/30'}`}>
-                        {isPaused ? <MapPin size={16} /> : <RefreshCw size={16} />} {isPaused ? 'PAUSED (Editor)' : 'RUNNING (Game)'}
-                    </button>
-                    <button onClick={resetGame} className="flex items-center gap-2 px-3 py-1.5 text-neutral-300 hover:bg-neutral-700 hover:text-white rounded text-sm transition-colors">
-                        <RefreshCw size={16} /> Reset
+                    <button
+                        onClick={resetGame}
+                        className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-700 rounded transition-all active:scale-95"
+                        title="Reset (Hotkey: R)"
+                    >
+                        <RotateCcw size={18} />
                     </button>
                 </div>
             </div>
@@ -2107,42 +2181,74 @@ const App = () => {
                                     No levels found in project folder.
                                 </div>
                             ) : (
-                                projectLevels.map(name => (
-                                    <div key={name} className="group flex items-center gap-2 p-1.5 rounded bg-neutral-900/40 hover:bg-neutral-800 transition-all border border-neutral-800 hover:border-neutral-700">
-                                        <button
-                                            onClick={() => setConfirmModal({
-                                                isOpen: true,
-                                                title: "Delete Level",
-                                                message: `Are you sure you want to permanently delete "${name}"?`,
-                                                onConfirm: () => deleteLevelFromProject(name),
-                                                confirmText: "Delete",
-                                                isDanger: true
-                                            })}
-                                            className="p-1 text-neutral-600 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
-                                            title="Delete Level"
+                                projectLevels.map(name => {
+                                    const isActive = activeLevelName === name;
+                                    return (
+                                        <div
+                                            key={name}
+                                            className={`group flex items-center gap-1 p-1 rounded transition-all border ${isActive ? 'bg-blue-600/10 border-blue-500/50 scale-[1.02] shadow-[0_0_10px_rgba(59,130,246,0.1)]' : 'bg-neutral-900/40 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-800'}`}
                                         >
-                                            <Trash2 size={12} />
-                                        </button>
+                                            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    onClick={() => setConfirmModal({
+                                                        isOpen: true,
+                                                        title: "Delete Level",
+                                                        message: `Are you sure you want to permanently delete "${name}"?`,
+                                                        onConfirm: () => deleteLevelFromProject(name),
+                                                        confirmText: "Delete",
+                                                        isDanger: true
+                                                    })}
+                                                    className="p-1 text-neutral-600 hover:text-red-500 transition-all"
+                                                    title="Delete Level"
+                                                >
+                                                    <Trash2 size={11} />
+                                                </button>
+                                                <button
+                                                    onClick={() => setRenameModal({ isOpen: true, oldName: name, newName: name })}
+                                                    className="p-1 text-neutral-600 hover:text-blue-400 transition-all"
+                                                    title="Rename Level"
+                                                >
+                                                    <Edit3 size={11} />
+                                                </button>
+                                            </div>
 
-                                        <span className="flex-1 text-[11px] font-medium text-neutral-400 group-hover:text-neutral-200 truncate" title={name}>
-                                            {name}
-                                        </span>
+                                            <span className={`flex-1 text-[11px] font-medium truncate px-1 ${isActive ? 'text-blue-400' : 'text-neutral-400 group-hover:text-neutral-200'}`} title={name}>
+                                                {name}
+                                            </span>
 
-                                        <button
-                                            onClick={() => setConfirmModal({
-                                                isOpen: true,
-                                                title: "Load Level",
-                                                message: `Discard current changes and load "${name}"?`,
-                                                onConfirm: () => loadFromProject(name),
-                                                confirmText: "Load"
-                                            })}
-                                            className="p-1 text-neutral-600 hover:text-blue-400 transition-all opacity-0 group-hover:opacity-100"
-                                            title="Load Level"
-                                        >
-                                            <Play size={12} fill="currentColor" />
-                                        </button>
-                                    </div>
-                                ))
+                                            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    onClick={() => {
+                                                        setConfirmModal({
+                                                            isOpen: true,
+                                                            title: "Save Progress",
+                                                            message: `Overwrite "${name}" with current changes?`,
+                                                            onConfirm: () => confirmSaveToProject(name),
+                                                            confirmText: "Save"
+                                                        });
+                                                    }}
+                                                    className="p-1 text-neutral-600 hover:text-green-500 transition-all"
+                                                    title="Save to this level"
+                                                >
+                                                    <Save size={11} />
+                                                </button>
+                                                <button
+                                                    onClick={() => setConfirmModal({
+                                                        isOpen: true,
+                                                        title: "Load Level",
+                                                        message: `Discard current changes and load "${name}"?`,
+                                                        onConfirm: () => loadFromProject(name),
+                                                        confirmText: "Load"
+                                                    })}
+                                                    className="p-1 text-neutral-600 hover:text-blue-400 transition-all"
+                                                    title="Load Level"
+                                                >
+                                                    <Play size={11} fill="currentColor" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })
                             )}
                         </div>
                     </div>
@@ -2363,6 +2469,53 @@ const App = () => {
                 </div>
             )}
 
+            {renameModal.isOpen && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-neutral-900 border border-neutral-700 w-[400px] rounded-2xl p-6 shadow-2xl scale-in-center">
+                        <h2 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
+                            <Edit3 size={20} className="text-blue-400" /> Rename Level
+                        </h2>
+                        <p className="text-neutral-400 text-sm mb-6">Enter a new name for "{renameModal.oldName}".</p>
+
+                        <div className="space-y-4">
+                            <input
+                                autoFocus
+                                type="text"
+                                value={renameModal.newName}
+                                onChange={(e) => setRenameModal(prev => ({ ...prev, newName: e.target.value }))}
+                                placeholder="New level name"
+                                className="w-full bg-black border border-neutral-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        renameLevelInProject(renameModal.oldName, renameModal.newName);
+                                        closeRenameModal();
+                                    }
+                                    if (e.key === 'Escape') closeRenameModal();
+                                }}
+                            />
+
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={closeRenameModal}
+                                    className="flex-1 px-4 py-3 rounded-xl bg-neutral-800 hover:bg-neutral-750 text-neutral-400 font-bold text-sm transition-all border border-neutral-700/50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        renameLevelInProject(renameModal.oldName, renameModal.newName);
+                                        closeRenameModal();
+                                    }}
+                                    className="flex-[1.5] px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-lg shadow-blue-900/20"
+                                >
+                                    Rename
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {isSaveModalOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-neutral-900 border border-neutral-700 w-96 rounded-2xl p-6 shadow-2xl scale-in-center">
@@ -2396,8 +2549,8 @@ const App = () => {
                                     Cancel
                                 </button>
                                 <button
-                                    onClick={confirmSaveToProject}
-                                    className="flex-[1.5] px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(37,99,235,0.3)]"
+                                    onClick={() => confirmSaveToProject()}
+                                    className="flex-[1.5] px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-lg shadow-blue-900/20"
                                 >
                                     Save
                                 </button>

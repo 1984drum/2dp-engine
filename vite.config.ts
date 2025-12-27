@@ -65,6 +65,32 @@ const levelStorage = () => ({
                     }
                 });
             }
+            else if (req.url === '/api/rename-level' && req.method === 'POST') {
+                let chunks: any[] = [];
+                req.on('data', chunk => chunks.push(chunk));
+                req.on('end', () => {
+                    try {
+                        const body = Buffer.concat(chunks).toString();
+                        const { oldName, newName } = JSON.parse(body);
+                        if (!oldName || !newName) throw new Error("Missing names");
+
+                        const oldPath = path.resolve(process.cwd(), 'levels', `${oldName}.2de7`);
+                        const newPath = path.resolve(process.cwd(), 'levels', `${newName}.2de7`);
+
+                        if (!fs.existsSync(oldPath)) throw new Error("Source level not found");
+                        if (fs.existsSync(newPath)) throw new Error("Target name already exists");
+
+                        fs.renameSync(oldPath, newPath);
+                        console.log(`[API] Renamed ${oldName} to ${newName}`);
+                        res.statusCode = 200;
+                        res.end('ok');
+                    } catch (err: any) {
+                        console.error('[API] Rename failed:', err.message);
+                        res.statusCode = 500;
+                        res.end(`fail: ${err.message}`);
+                    }
+                });
+            }
             else if (req.url?.startsWith('/api/load-level') && req.method === 'GET') {
                 const url = new URL(req.url, `http://${req.headers.host}`);
                 const name = url.searchParams.get('name');
