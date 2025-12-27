@@ -61,7 +61,9 @@ class SceneManager {
             coyoteTimer: 0,
             jumpBufferTimer: 0,
             isJumping: false,
-            jumpProcessed: false
+            jumpProcessed: false,
+            respawnTimer: 0,
+            airMoveTimer: 0
         } as Physics);
         entityManager.addComponent(player.id, { type: 'collider', width: 20, height: 32, isTrigger: false } as Collider);
         entityManager.addComponent(player.id, { type: 'player_control' } as any);
@@ -80,7 +82,9 @@ class SceneManager {
             coyoteTimer: 0,
             jumpBufferTimer: 0,
             isJumping: false,
-            jumpProcessed: false
+            jumpProcessed: false,
+            respawnTimer: 0,
+            airMoveTimer: 0
         } as Physics);
         entityManager.addComponent(boulder.id, { type: 'collider', width: data.r * 2 || 40, height: data.r * 2 || 40, isTrigger: false } as Collider);
         entityManager.addComponent(boulder.id, { type: 'boulder', r: data.r || 20 } as any);
@@ -99,7 +103,9 @@ class SceneManager {
             coyoteTimer: 0,
             jumpBufferTimer: 0,
             isJumping: false,
-            jumpProcessed: false
+            jumpProcessed: false,
+            respawnTimer: 0,
+            airMoveTimer: 0
         } as Physics);
         entityManager.addComponent(enemy.id, { type: 'collider', width: data.width || 32, height: data.height || 32, isTrigger: false } as Collider);
         entityManager.addComponent(enemy.id, { type: 'enemy' } as any);

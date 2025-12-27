@@ -121,8 +121,10 @@ export class CollisionSystem extends System {
             if (!physics.isGrounded) eventBus.emit('ENTITY_GROUNDED', entity.id);
             physics.isGrounded = true;
             physics.coyoteTimer = Constants.COYOTE_FRAMES; // Reset coyote time
-            // Visual rotation for player/enemies
-            transform.rotation = transform.rotation + (currentSlopeAngle - transform.rotation) * 0.2;
+            physics.slopeAngle = currentSlopeAngle; // Store for physics calculations
+            // Visual rotation for player/enemies (Dampened to 50% for "slight" tilt)
+            const targetRotation = currentSlopeAngle * 0.5;
+            transform.rotation = transform.rotation + (targetRotation - transform.rotation) * 0.2;
         } else {
             physics.isGrounded = false;
             if (physics.coyoteTimer > 0) {

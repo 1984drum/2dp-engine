@@ -36,6 +36,9 @@ export interface Physics extends Component {
     jumpBufferTimer: number; // Intent to jump stored before landing
     isJumping: boolean;     // Tracking if currently in a jump arc
     jumpProcessed: boolean; // Prevention of auto-jumping on hold
+    respawnTimer: number;   // Timer for auto-respawning after falling OOB
+    airMoveTimer: number;   // Timer for directional air momentum boost
+    slopeAngle?: number;    // Current ground angle in radians
 }
 
 export interface Collider extends Component {

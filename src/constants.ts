@@ -1,17 +1,17 @@
 // --- PHYSICS CONSTANTS ---
-export const GRAVITY = 0.35; // Lower for floaty ascent
-export const FALL_GRAVITY_MULTIPLIER = 3.2; // Fast fall to contrast floaty jump
-export const JUMP_FORCE = -12.5; // Snappier start
-export const MAX_MOVE_SPEED = 2.6; // Slightly faster for responsiveness
-export const ACCELERATION = 0.22;
-export const BRAKE_ACCELERATION = 0.45; // Slightly slower braking for "slip"
-export const FRICTION = 0.92; // Less ground friction = more slip
-export const AIR_ACCELERATION = 0.35; // Responsive air control
-export const AIR_FRICTION = 0.98;
-export const MIN_JUMP_GRAVITY = 1.8; // Not directly used in current system, but keeping for reference
+export const GRAVITY = 0.08; // Significantly lower for floaty "long" jump
+export const FALL_GRAVITY_MULTIPLIER = 1.4; // Slower descent
+export const JUMP_FORCE = -6.5; // Adjusted for lower gravity to hit ~2.5s air time
+export const MAX_MOVE_SPEED = 3.0; // Faster top speed
+export const ACCELERATION = 0.05; // Laggy start
+export const BRAKE_ACCELERATION = 0.35;
+export const FRICTION = 0.94; // More slip
+export const AIR_ACCELERATION = 0.35;
+export const AIR_FRICTION = 0.99; // Less air drag
+export const MIN_JUMP_GRAVITY = 1.8;
 export const WALL_BOUNCE = 0.0;
-export const MAX_FALL_SPEED = 14;
-export const COYOTE_FRAMES = 10;
+export const MAX_FALL_SPEED = 8; // Capped lower for floaty fall
+export const COYOTE_FRAMES = 18;
 export const JUMP_BUFFER_FRAMES = 12;
 export const SLOPE_CHECK_DIST = 5;
 export const ANGLE_YELLOW_THRESHOLD = 45 * (Math.PI / 180);
@@ -36,9 +36,9 @@ export const DEFAULT_START_Y = 100;
 
 // --- CAMERA CONSTANTS ---
 export const ASPECT_RATIO = 16 / 9;
-export const CAMERA_LERP = 0.08;
-export const DEAD_ZONE_W = 120;
-export const DEAD_ZONE_H = 80;
+export const CAMERA_LERP = 0.05; // Looser lerp for "elastic" feel
+export const DEAD_ZONE_W = 40; // Tighter dead zone
+export const DEAD_ZONE_H = 60;
 export const VERTICAL_OFFSET = -40;
 
 // --- LAYERS ---

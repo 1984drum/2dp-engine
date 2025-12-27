@@ -34,6 +34,10 @@ export class CameraSystem {
         this.config = config;
     }
 
+    setConfig(config: Partial<CameraConfig>) {
+        this.config = { ...this.config, ...config };
+    }
+
     /**
      * Updates the camera position based on the player's position and current viewport/world bounds.
      */

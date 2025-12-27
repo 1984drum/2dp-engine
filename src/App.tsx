@@ -34,6 +34,11 @@ const App = () => {
     const [brushSize] = useState(4); // Hardcoded to 4px as requested
     const [platformSpeed, setPlatformSpeed] = useState(1.0);
     const [showCollisions, setShowCollisions] = useState(true);
+    // Removed old grid overlay state as requested
+    const [camDeadZoneW, setCamDeadZoneW] = useState(480); // Default to middle half
+    const [camDeadZoneH, setCamDeadZoneH] = useState(300); // Default to stable center
+    const [camLerp, setCamLerp] = useState(0.05);
+    const [camVOffset, setCamVOffset] = useState(-50);
     const [showGrid, setShowGrid] = useState(true);
     const [gridSize, setGridSize] = useState(60);
     const [visibleLayers, setVisibleLayers] = useState<Record<string, boolean>>({
@@ -303,6 +308,7 @@ const App = () => {
     };
 
     const saveToProject = (presetName?: string) => {
+        setIsPaused(true); // Auto-pause before saving
         if (presetName) {
             setSaveLevelName(presetName);
             confirmSaveToProject(presetName);
@@ -413,6 +419,7 @@ const App = () => {
 
             // modular engine sync
             engineCore.loadLevel(levelData);
+            respawnPlayer(); // Snap player & camera to spawn point immediately
 
             saveState();
         } catch (err) {
@@ -483,6 +490,11 @@ const App = () => {
             if (debugMode) console.log(`[Engine] Entity ${id} grounded`);
         });
 
+        eventBus.on('PLAYER_OUT_OF_BOUNDS', () => {
+            setNotification("Fallen out of bounds! Respawning...");
+            respawnPlayer();
+        });
+
         const init = async () => {
             await fetchProjectLevels();
             // Auto-load demo-1 if it exists
@@ -499,7 +511,18 @@ const App = () => {
             */
         };
         init();
+        init();
     }, []);
+
+    // Sync state to CameraSystem whenever it changes
+    useEffect(() => {
+        cameraRef.current.setConfig({
+            deadZoneWidth: camDeadZoneW,
+            deadZoneHeight: camDeadZoneH,
+            lerpFactor: camLerp,
+            verticalOffset: camVOffset
+        });
+    }, [camDeadZoneW, camDeadZoneH, camLerp, camVOffset]);
 
     const spawnDebris = (x: number, y: number, color: string) => {
         for (let i = 0; i < 6; i++) {
@@ -2359,25 +2382,44 @@ const App = () => {
                     <div className="h-px bg-neutral-700/50"></div>
 
                     <div className="flex flex-col gap-3">
-                        <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Canvas Settings</h3>
-                        <div className="flex flex-col gap-2 p-3 bg-neutral-900/50 rounded-lg border border-neutral-700/50">
-                            <div className="flex justify-between items-center mb-1">
-                                <div className="flex items-center gap-2">
-                                    <Grid size={14} className="text-neutral-400" />
-                                    <span className="text-xs font-medium text-neutral-300">Grid Overlay</span>
+                        <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Camera Settings</h3>
+                        <div className="flex flex-col gap-3 p-3 bg-neutral-900/50 rounded-lg border border-neutral-700/50">
+                            {/* Dead Zone X */}
+                            <div>
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-[10px] uppercase font-bold text-neutral-400">Dead Zone W</span>
+                                    <span className="text-[10px] text-blue-400 font-mono">{camDeadZoneW}px</span>
                                 </div>
-                                <button onClick={() => setShowGrid(!showGrid)} className={`transition-colors ${showGrid ? 'text-blue-400' : 'text-neutral-600'}`}>
-                                    {showGrid ? <Eye size={14} /> : <EyeOff size={14} />}
-                                </button>
+                                <input type="range" min="0" max="800" step="10" value={camDeadZoneW} onChange={(e) => setCamDeadZoneW(parseFloat(e.target.value))} className="w-full h-1 accent-blue-500 bg-neutral-700 rounded-lg appearance-none cursor-pointer" />
                             </div>
-                            {showGrid && (
-                                <div className="mt-1">
-                                    <input type="range" min="20" max="100" step="10" value={gridSize} onChange={(e) => setGridSize(parseInt(e.target.value))} className="w-full accent-blue-500 h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer" />
-                                    <div className="text-[10px] text-right text-neutral-500 mt-1">{gridSize}px</div>
-                                </div>
-                            )}
-                        </div>
 
+                            {/* Dead Zone Y */}
+                            <div>
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-[10px] uppercase font-bold text-neutral-400">Dead Zone H</span>
+                                    <span className="text-[10px] text-blue-400 font-mono">{camDeadZoneH}px</span>
+                                </div>
+                                <input type="range" min="0" max="500" step="10" value={camDeadZoneH} onChange={(e) => setCamDeadZoneH(parseFloat(e.target.value))} className="w-full h-1 accent-blue-500 bg-neutral-700 rounded-lg appearance-none cursor-pointer" />
+                            </div>
+
+                            {/* Smoothing */}
+                            <div>
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-[10px] uppercase font-bold text-neutral-400">Smoothing (Lerp)</span>
+                                    <span className="text-[10px] text-blue-400 font-mono">{camLerp.toFixed(3)}</span>
+                                </div>
+                                <input type="range" min="0.01" max="0.5" step="0.01" value={camLerp} onChange={(e) => setCamLerp(parseFloat(e.target.value))} className="w-full h-1 accent-purple-500 bg-neutral-700 rounded-lg appearance-none cursor-pointer" />
+                            </div>
+
+                            {/* Vertical Offset */}
+                            <div>
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-[10px] uppercase font-bold text-neutral-400">Vertical Offset</span>
+                                    <span className="text-[10px] text-blue-400 font-mono">{camVOffset}px</span>
+                                </div>
+                                <input type="range" min="-200" max="200" step="10" value={camVOffset} onChange={(e) => setCamVOffset(parseFloat(e.target.value))} className="w-full h-1 accent-green-500 bg-neutral-700 rounded-lg appearance-none cursor-pointer" />
+                            </div>
+                        </div>
                     </div>
 
                     <div className="mt-auto flex flex-col gap-2 pt-4">

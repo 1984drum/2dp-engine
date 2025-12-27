@@ -32,9 +32,10 @@ export class PlayerControlSystem extends System {
                 physics.jumpProcessed = true;
             } else if (!isJumpHeld) {
                 physics.jumpProcessed = false;
-                // Variable Jump Height: Cut velocity if released while ascending
-                if (physics.isJumping && physics.vy < -2) {
-                    physics.vy *= 0.35; // More aggressive cut for better tap/hold distinction
+                // Variable Jump Height: Smoother cut for floaty physics
+                // Instead of sharp 0.2 cut, use 0.5 to retain some momentum arc
+                if (physics.isJumping && physics.vy < -2.0) {
+                    physics.vy = Math.max(physics.vy * 0.5, -2.0); // Gentle damping
                     physics.isJumping = false;
                 }
             }
@@ -46,12 +47,14 @@ export class PlayerControlSystem extends System {
                 physics.coyoteTimer = 0;
                 physics.jumpBufferTimer = 0;
                 physics.isJumping = true;
+                physics.airMoveTimer = 0; // Reset air boost timer
                 eventBus.emit('ENTITY_JUMPED', entity.id);
             }
 
             // --- 4. GROUNDING / JUMP RESET ---
             if (physics.vy >= 0 && isGrounded) {
                 physics.isJumping = false;
+                physics.airMoveTimer = 0;
             }
 
             // --- 5. HORIZONTAL MOVEMENT ---
@@ -59,16 +62,35 @@ export class PlayerControlSystem extends System {
             const currentBrake = isGrounded ? Constants.BRAKE_ACCELERATION : (Constants.AIR_ACCELERATION * 1.5);
             const currentFriction = isGrounded ? Constants.FRICTION : Constants.AIR_FRICTION;
 
+            // Air Momentum Boost Logic
+            let maxSpeed = Constants.MAX_MOVE_SPEED;
+            let moveAccel = currentAccel;
+
+            if (physics.isJumping && !isGrounded) {
+                // If holding direction same as movement, boost
+                if ((isLeft && physics.vx < 0) || (isRight && physics.vx > 0)) {
+                    physics.airMoveTimer++;
+                    if (physics.airMoveTimer > 10) {
+                        maxSpeed *= 1.2; // 20% speed boost for committed jumps
+                        moveAccel *= 1.5; // Snappier air control
+                    }
+                } else {
+                    physics.airMoveTimer = 0;
+                }
+            } else {
+                physics.airMoveTimer = 0;
+            }
+
             if (isLeft) {
                 // If moving opposite way, use snap/brake accel
                 if (physics.vx > 0) physics.vx -= currentBrake * dt * 60;
-                else if (physics.vx > -Constants.MAX_MOVE_SPEED) {
-                    physics.vx -= currentAccel * dt * 60;
+                else if (physics.vx > -maxSpeed) {
+                    physics.vx -= moveAccel * dt * 60;
                 }
             } else if (isRight) {
                 if (physics.vx < 0) physics.vx += currentBrake * dt * 60;
-                else if (physics.vx < Constants.MAX_MOVE_SPEED) {
-                    physics.vx += currentAccel * dt * 60;
+                else if (physics.vx < maxSpeed) {
+                    physics.vx += moveAccel * dt * 60;
                 }
             } else {
                 // Momentum / Friction
@@ -76,9 +98,25 @@ export class PlayerControlSystem extends System {
                 if (Math.abs(physics.vx) < 0.1) physics.vx = 0;
             }
 
-            // Safety cap for extremely fast movement (sub-stepping handles the rest)
-            if (Math.abs(physics.vx) > Constants.MAX_MOVE_SPEED * 1.5) {
-                physics.vx = Math.sign(physics.vx) * Constants.MAX_MOVE_SPEED * 1.5;
+            // --- 6. AUTO-RESPAWN DETECTION ---
+            const transform = entity.components.get('transform') as Transform;
+            const isOOB = transform.y > Constants.WORLD_HEIGHT + 100;
+
+            if (isOOB) {
+                physics.respawnTimer += dt;
+                if (physics.respawnTimer >= 1.5) {
+                    eventBus.emit('PLAYER_OUT_OF_BOUNDS', entity.id);
+                    physics.respawnTimer = 0; // Reset after emitting to avoid spam
+                }
+            } else if (isGrounded) {
+                physics.respawnTimer = 0;
+            }
+
+            // ABSOLUTE SPEED CAP
+            // Prevent runaway velocity from slopes/boosts
+            const ABSOLUTE_MAX = 5.0;
+            if (Math.abs(physics.vx) > ABSOLUTE_MAX) {
+                physics.vx = Math.sign(physics.vx) * ABSOLUTE_MAX;
             }
         }
     }
